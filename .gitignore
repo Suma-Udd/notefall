@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+demo.mp4
+examples/*.wav
+examples/*.mid
+_notefall_audio.wav
