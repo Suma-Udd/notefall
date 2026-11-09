@@ -167,8 +167,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.input is None:
-        from .gui import main as gui_main
-
+        try:
+            from .gui import main as gui_main
+        except ImportError as exc:  # Python built without tkinter
+            parser.print_help()
+            print("\n(the app window needs tkinter, which this Python doesn't have: %s)" % exc)
+            return 2
         return gui_main()
 
     # packaged windowed apps have no console, so stderr can be None
