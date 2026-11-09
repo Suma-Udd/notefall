@@ -5,7 +5,7 @@ build/
 dist/
 *.egg-info/
 .pytest_cache/
-demo.mp4
 examples/*.wav
-examples/*.mid
-_notefall_audio.wav
+media/demo-quick.mp4
+*.part.mp4
+*-notefall.mp4
