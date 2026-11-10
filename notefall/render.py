@@ -24,6 +24,10 @@ FORMATS = {
     "square": (1080, 1080),
 }
 
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+TITLE_FONT = os.path.join(ASSETS, "fonts", "InterDisplay-SemiBold.ttf")
+UI_FONT = os.path.join(ASSETS, "fonts", "Inter-SemiBold.ttf")
+
 FONT_FILES = [
     # Linux
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -46,10 +50,10 @@ FADE_IN = 0.4
 FADE_OUT = 1.0
 
 
-def load_font(size):
-    """A bold sans font at `size` px, falling back to Pillow's own."""
+def load_font(size, path=UI_FONT):
+    """Inter (bundled) at `size` px, then a system sans, then Pillow's own."""
     size = max(8, int(size))
-    for fp in FONT_FILES:
+    for fp in [path] + FONT_FILES:
         if os.path.exists(fp):
             try:
                 return ImageFont.truetype(fp, size)
@@ -76,15 +80,6 @@ def _mix(a, b, f):
 
 def _scale(c, f):
     return tuple(int(min(255, max(0, x * f))) for x in c)
-
-
-def _rrect(draw, box, radius, **kw):
-    x0, y0, x1, y1 = box
-    r = max(0, min(radius, (x1 - x0) / 2 - 0.5, (y1 - y0) / 2 - 0.5))
-    if r < 1:
-        draw.rectangle(box, **kw)
-    else:
-        draw.rounded_rectangle(box, radius=r, **kw)
 
 
 def collect_notes(pm, split=None, sustain="keys"):
@@ -179,6 +174,14 @@ class _Particles:
                 yield p
 
 
+def kb_top_band(kb_top, ww):
+    """Highest y the hit flare and sparks can reach."""
+    return kb_top - ww * 6.5
+
+
+VEL_STEPS = 6
+
+
 class Renderer:
     """Holds everything that stays the same between frames."""
 
@@ -217,9 +220,17 @@ class Renderer:
         self.outline_w = max(1, int(round(ww * 0.035)))
 
         self.particles = _Particles(len(notes), ww) if particles else None
-        self.f_title = load_font(min(width, height) * 0.045)
+        self.f_title = load_font(min(width, height) * 0.042, TITLE_FONT)
         self.f_key = load_font(min(ww * 0.34, self.kb_h * 0.1))
         self.f_pedal = load_font(min(width, height) * 0.022)
+
+        # note blocks are pre-drawn, anti-aliased sprites (caps + a 1 px body strip)
+        self.note_w = max(3, int(round(ww - 2 * self.pad)))
+        self.note_w_black = max(3, int(round(ww * 0.6 - 2 * self.pad * 0.6)))
+        self.glow_m = max(2, int(ww * 0.28))
+        self._sprites = {}
+        # the glow layer only needs to cover the strip around the hit line
+        self.band_top = max(0, int(kb_top_band(self.kb_top, ww)))
 
         self._lit_cache = {}
         self._build_static()
@@ -250,7 +261,11 @@ class Renderer:
         pool = pool.resize((W, pool.height))
         bg.paste(ImageChops.add(bg.crop((0, self.kb_top - pool.height, W, self.kb_top)), pool),
                  (0, self.kb_top - pool.height))
-        self.background = bg
+        # a whisper of noise stops the dark gradient from banding after compression
+        arr = np.asarray(bg, dtype=np.int16)
+        noise = np.random.default_rng(5).integers(-1, 2, size=arr.shape[:2], dtype=np.int16)
+        arr = np.clip(arr + noise[:, :, None], 0, 255).astype(np.uint8)
+        self.background = Image.fromarray(arr)
 
         self.kb_base = self._draw_keyboard()
         self.black_layer = self._draw_black_keys()
@@ -336,6 +351,77 @@ class Renderer:
             fill = accent + (110,)
         d.text((x0 + h / 2, y0 + (h - f.size) / 2 - f.size * 0.08), label, font=f, fill=fill)
 
+    def _sprite(self, right, black, playing, vb):
+        """(top cap, body strip, bottom cap, full) for one kind of note block."""
+        key = (right, black, playing, vb)
+        got = self._sprites.get(key)
+        if got:
+            return got
+        pal = self.pal
+        col = pal["right"] if right else pal["left"]
+        hi = pal["right_hi"] if right else pal["left_hi"]
+        if black:
+            col, hi = _scale(col, 0.78), _scale(hi, 0.85)
+        strength = 0.8 + 0.2 * vb / (VEL_STEPS - 1)
+        body = _mix(_scale(col, strength), hi, 0.38) if playing else _scale(col, strength)
+
+        S = 4
+        w = self.note_w_black if black else self.note_w
+        m, r = self.glow_m, min(self.radius, max(1, (self.note_w_black if black else self.note_w) // 2))
+        cap = r + m + 1
+        h = 2 * cap + 1
+        W, Hh = (w + 2 * m) * S, h * S
+        box = [m * S, m * S, (m + w) * S - 1, (h - m) * S - 1]
+
+        glow = Image.new("L", (W, Hh), 0)
+        ImageDraw.Draw(glow).rounded_rectangle(box, radius=r * S, fill=255)
+        glow = glow.filter(ImageFilter.GaussianBlur(m * S * 0.45))
+        glow = glow.point(lambda v: int(v * (0.55 if playing else 0.22)))
+
+        shape = Image.new("L", (W, Hh), 0)
+        ImageDraw.Draw(shape).rounded_rectangle(box, radius=r * S, fill=255)
+
+        # rounded, slightly lit from the left, with a crisp lighter rim
+        xs = np.linspace(0, 1, W, dtype=np.float32)[None, :, None]
+        base = np.array(body, dtype=np.float32)[None, None, :]
+        lit = 1.0 + 0.16 * (1 - xs) - 0.10 * xs
+        fill = np.clip(base * lit, 0, 255) * np.ones((Hh, 1, 1), dtype=np.float32)
+        rgb = Image.fromarray(fill.astype(np.uint8))
+        rim = Image.new("L", (W, Hh), 0)
+        rw = max(1, self.outline_w) * S
+        ImageDraw.Draw(rim).rounded_rectangle(box, radius=r * S, outline=200 if playing else 140,
+                                              width=rw)
+        rgb = Image.composite(Image.new("RGB", (W, Hh), hi), rgb, rim)
+
+        glow_rgb = Image.new("RGB", (W, Hh), hi if playing else col)
+        out = Image.merge("RGBA", (*glow_rgb.split(), glow))
+        note = rgb.convert("RGBA")
+        note.putalpha(shape)
+        out.alpha_composite(note)
+        out = out.resize((w + 2 * m, h), Image.LANCZOS)
+
+        full = out
+        top = out.crop((0, 0, out.width, cap))
+        strip = out.crop((0, cap, out.width, cap + 1))
+        bottom = out.crop((0, h - cap, out.width, h))
+        got = (top, strip, bottom, full, cap, m, w)
+        self._sprites[key] = got
+        return got
+
+    def _paste_note(self, img, cx, y0, y1, sprite):
+        top, strip, bottom, full, cap, m, w = sprite
+        x = int(round(cx - w / 2)) - m
+        y = int(round(y0)) - m
+        ht = int(round(y1)) - int(round(y0)) + 2 * m
+        if ht >= 2 * cap + 1:
+            img.paste(top, (x, y), top)
+            mid = strip.resize((strip.width, ht - 2 * cap), Image.NEAREST)
+            img.paste(mid, (x, y + cap), mid)
+            img.paste(bottom, (x, y + ht - cap), bottom)
+        elif ht > 2 * m:
+            small = full.resize((full.width, ht), Image.BILINEAR)
+            img.paste(small, (x, y), small)
+
     def _lit(self, right, w, h, black):
         key = (right, w, h, black)
         img = self._lit_cache.get(key)
@@ -359,8 +445,12 @@ class Renderer:
         img = self.background.copy()
         d = ImageDraw.Draw(img, "RGBA")
         gs = GLOW_SCALE
-        glow = Image.new("RGB", (W // gs + 1, H // gs + 1), (0, 0, 0))
+        oy = self.band_top
+        glow = Image.new("RGB", (W // gs + 1, (H - oy) // gs + 1), (0, 0, 0))
         g = ImageDraw.Draw(glow)
+
+        def gbox(x0, y0, x1, y1):
+            return [x0 / gs, (y0 - oy) / gs, x1 / gs, (y1 - oy) / gs]
 
         for b in self.downbeats:
             y = kb_top - (b - t) * pps
@@ -369,6 +459,7 @@ class Renderer:
 
         visible = np.nonzero((self.starts <= t + self.lookahead) & (self.ends >= t - 0.02))[0]
         active = {}
+        sparks = []
         # white key notes first, black key notes on top
         order = sorted(visible, key=lambda i: self.geo[self.notes[i][2]][2])
         for i in order:
@@ -376,42 +467,35 @@ class Renderer:
             x0, x1, is_black = self.geo[pitch]
             bottom = kb_top - (start - t) * pps
             top = bottom - max(ww * 0.25, (end - start) * pps)
-            pad = self.pad * (0.6 if is_black else 1.0)
-            bx0, bx1 = x0 + pad, x1 - pad
             by0, by1 = max(-40.0, top), min(float(kb_top), bottom)
             if by1 - by0 < 2:
                 continue
-
-            col = pal["right"] if right else pal["left"]
-            hi = pal["right_hi"] if right else pal["left_hi"]
-            if is_black:
-                col, hi = _scale(col, 0.78), _scale(hi, 0.85)
-            strength = 0.8 + 0.2 * (vel / 127.0)
             playing = start <= t <= end
-            body = _mix(_scale(col, strength), hi, 0.35) if playing else _scale(col, strength)
+            vb = int(round(vel / 127.0 * (VEL_STEPS - 1)))
+            cx = (x0 + x1) / 2
+            self._paste_note(img, cx, by0, by1, self._sprite(right, is_black, playing, vb))
 
-            _rrect(d, [bx0, by0, bx1, by1], self.radius, fill=body + (255,),
-                   outline=hi + (230 if playing else 170,), width=self.outline_w)
-            g.rectangle([bx0 / gs, by0 / gs, bx1 / gs, by1 / gs],
-                        fill=_scale(col, 0.75 if playing else 0.22))
+            hi = pal["right_hi"] if right else pal["left_hi"]
             if playing:
                 active[pitch] = right
-                cx = (x0 + x1) / 2
+                col = pal["right"] if right else pal["left"]
+                g.rectangle(gbox(cx - ww * 0.35, max(by0, kb_top - ww * 3), cx + ww * 0.35, kb_top),
+                            fill=_scale(col, 0.55))
                 rx, ry = ww * 1.0, ww * 0.55
-                g.ellipse([(cx - rx) / gs, (kb_top - ry) / gs, (cx + rx) / gs, (kb_top + ry) / gs],
-                          fill=hi)
+                g.ellipse(gbox(cx - rx, kb_top - ry, cx + rx, kb_top + ry), fill=hi)
 
             if self.particles and t - start < 1.0:
-                cx = (x0 + x1) / 2
-                spark = _mix(hi, (255, 255, 255), 0.4)
-                for (px, py, size, fade) in self.particles.sparks(i, t, start, end, cx, kb_top, vel):
-                    if py > kb_top or py < 0:
-                        continue
-                    d.ellipse([px - size, py - size, px + size, py + size],
-                              fill=spark + (int(255 * fade),))
-                    gsz = size * 2.2
-                    g.ellipse([(px - gsz) / gs, (py - gsz) / gs, (px + gsz) / gs, (py + gsz) / gs],
-                              fill=_scale(hi, fade))
+                sparks.append((i, start, end, cx, vel, hi))
+
+        for (i, start, end, cx, vel, hi) in sparks:
+            spark = _mix(hi, (255, 255, 255), 0.4)
+            for (px, py, size, fade) in self.particles.sparks(i, t, start, end, cx, kb_top, vel):
+                if py > kb_top or py < oy:
+                    continue
+                d.ellipse([px - size, py - size, px + size, py + size],
+                          fill=spark + (int(255 * fade),))
+                gsz = size * 2.2
+                g.ellipse(gbox(px - gsz, py - gsz, px + gsz, py + gsz), fill=_scale(hi, fade))
 
         # keyboard
         kb = self.kb_base.copy()
@@ -423,7 +507,7 @@ class Renderer:
                 continue
             bx0, by0, bx1, by1 = self._white_box(pitch)
             kb.paste(self._lit(right, bx1 - bx0, by1 - by0, False), (bx0, by0))
-            g.rectangle([bx0 / gs, (kb_top + by0) / gs, bx1 / gs, (kb_top + by0 + self.white_h * 0.5) / gs],
+            g.rectangle(gbox(bx0, kb_top + by0, bx1, kb_top + by0 + self.white_h * 0.5),
                         fill=_scale(pal["right"] if right else pal["left"], 0.5))
             if pitch % 12 == 0:
                 lit_c.append(pitch)
@@ -436,18 +520,20 @@ class Renderer:
                 continue
             bx0, by0, bx1, by1 = self._black_box(x0, x1)
             kb.paste(self._lit(right, bx1 - bx0, by1 - by0, True), (bx0, by0))
-            g.rectangle([bx0 / gs, (kb_top + by0) / gs, bx1 / gs, (kb_top + by1) / gs],
+            g.rectangle(gbox(bx0, kb_top + by0, bx1, kb_top + by1),
                         fill=_scale(pal["right"] if right else pal["left"], 0.6))
         img.paste(kb, (0, kb_top))
 
         # the line notes land on
         d.line([0, kb_top, W, kb_top], fill=_mix(pal["accent"], (255, 255, 255), 0.3) + (200,), width=2)
-        g.line([0, kb_top / gs, W / gs, kb_top / gs], fill=_scale(pal["accent"], 0.35),
+        g.line([0, (kb_top - oy) / gs, W / gs, (kb_top - oy) / gs], fill=_scale(pal["accent"], 0.35),
                width=max(1, int(ww / gs * 0.12)))
 
         blur = max(2.0, ww / gs * 0.45)
-        glow = glow.filter(ImageFilter.GaussianBlur(blur)).resize((W, H), Image.BILINEAR)
-        img = ImageChops.screen(img, glow.crop((0, 0, W, H)))
+        bh = H - oy
+        glow = glow.filter(ImageFilter.GaussianBlur(blur)).resize(
+            (glow.width * gs, glow.height * gs), Image.BILINEAR).crop((0, 0, W, bh))
+        img.paste(ImageChops.screen(img.crop((0, oy, W, H)), glow), (0, oy))
         d = ImageDraw.Draw(img, "RGBA")
 
         if self.pedal:
@@ -492,7 +578,7 @@ def render(
     out,
     width=1080,
     height=1920,
-    fps=30,
+    fps=60,
     lookahead=None,
     theme_name=theme.DEFAULT_THEME,
     title=None,
@@ -505,7 +591,7 @@ def render(
     sustain="keys",
     on_progress=None,
     cancel=None,
-    crf=18,
+    crf=17,
     workers=None,
 ):
     """Render `midi` (path or PrettyMIDI) to `out` as an mp4.
@@ -572,8 +658,11 @@ def render(
         cmd += ["-af", ",".join(filters), "-c:a", "aac", "-b:a", "192k"]
     else:
         cmd += ["-an"]
-    cmd += ["-c:v", "libx264", "-preset", "medium", "-tune", "animation", "-crf", str(crf),
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-t", "%.3f" % duration, part]
+    # aq-mode 3 keeps the dark gradients clean, a 2 s GOP keeps seeking snappy
+    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+            "-x264-params", "aq-mode=3:keyint=%d" % (fps * 2),
+            "-pix_fmt", "yuv420p", "-colorspace", "bt709", "-color_primaries", "bt709",
+            "-color_trc", "bt709", "-movflags", "+faststart", "-t", "%.3f" % duration, part]
 
     ok = False
     with open(log_path, "wb") as log:
@@ -624,25 +713,31 @@ def render(
     return out
 
 
-def preview(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
-            sustain="keys", split=None, at=None):
-    """One still frame, for picking colours and sizes before a full render."""
+def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
+                   sustain="keys", split=None, at=None, count=1, fps=20, particles=True):
+    """A few frames from a moment in the song, for a live preview."""
     pm = pretty_midi.PrettyMIDI(os.fspath(midi)) if isinstance(midi, (str, os.PathLike)) else midi
     notes = collect_notes(pm, split=split, sustain=sustain)
     if not notes:
         raise media.NotefallError("no piano notes found in that MIDI")
     width, height = max(64, int(width) // 2 * 2), max(64, int(height) // 2 * 2)
     pedal = keyboard.pedal_intervals(pm.instruments)
-    r = Renderer(notes, width, height, 30, None, theme.get(theme_name), title, True, [],
-                 True, 1.0, pedal=pedal)
+    r = Renderer(notes, width, height, fps, None, theme.get(theme_name), title, True, [],
+                 particles, 1.0, pedal=pedal)
     end = max(n[1] for n in notes)
     r.shift(0.0, [], end + TAIL)
     if at is None:
         # land a little into the song, on a moment where something is playing
         target = notes[0][0] + min(6.0, (end - notes[0][0]) * 0.3)
         playing = [n[0] for n in notes if n[0] >= target]
-        at = (playing[0] + 0.05) if playing else target
-    return r.frame(at)
+        at = (playing[0] - 0.1) if playing else target
+    at = max(FADE_IN, at)
+    return [r.frame(at + i / fps) for i in range(count)]
+
+
+def preview(midi, width=270, height=480, **kw):
+    """One still frame, for picking colours and sizes before a full render."""
+    return preview_frames(midi, width, height, count=1, **kw)[0]
 
 
 def _cli_progress(frac):

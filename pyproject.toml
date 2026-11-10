@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "notefall"
-version = "0.2.0"
+version = "0.3.0"
 description = "Turn a MIDI file or a piano recording into a falling notes piano video. App window or one command."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE", "notefall/models/LICENSE-basic-pitch.txt", "notefall/models/NOTICE-basic-pitch.txt"]
+license-files = ["LICENSE", "notefall/assets/models/LICENSE-basic-pitch.txt", "notefall/assets/models/NOTICE-basic-pitch.txt", "notefall/assets/fonts/LICENSE-Inter.txt"]
 authors = [{ name = "Sumayer Uddin" }]
 keywords = ["midi", "piano", "visualizer", "falling notes", "piano roll", "ffmpeg", "music", "video", "transcription"]
 classifiers = [
@@ -41,7 +41,7 @@ transcribe = []
 notefall = "notefall.cli:main"
 
 [project.gui-scripts]
-notefall-app = "notefall.gui:main"
+notefall-app = "notefall.app:main"
 
 [project.urls]
 Homepage = "https://github.com/Suma-Udd/notefall"
@@ -51,7 +51,7 @@ Issues = "https://github.com/Suma-Udd/notefall/issues"
 packages = ["notefall"]
 
 [tool.setuptools.package-data]
-notefall = ["models/*"]
+notefall = ["assets/models/*", "assets/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

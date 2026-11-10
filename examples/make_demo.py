@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the demo from scratch: Bach's Prelude in C (BWV 846), bars 1 to 19.
 
-    python examples/make_demo.py            # vertical demo.mp4 + landscape version
+    python examples/make_demo.py            # docs/media/demo.mp4, the landscape one and demo.webp
     python examples/make_demo.py --quick    # small fast preview
 
 Writes examples/prelude_in_c.mid (the MIDI is generated here, not
@@ -100,7 +100,7 @@ def main():
     args = ap.parse_args()
 
     ex = os.path.join(ROOT, "examples")
-    media_dir = os.path.join(ROOT, "media")
+    media_dir = os.path.join(ROOT, "docs", "media")
     os.makedirs(media_dir, exist_ok=True)
     midi = build_midi(os.path.join(ex, "prelude_in_c.mid"))
     wav = synth.synth(midi, os.path.join(ex, "prelude_in_c.wav"), soundfont=args.soundfont)
@@ -113,8 +113,25 @@ def main():
         out = os.path.join(media_dir, name)
         print("rendering", out)
         render.render(midi, out, width=w, height=h, title="Prelude in C  ·  J.S. Bach",
-                      audio=wav, theme_name=args.theme, on_progress=render._cli_progress)
+                      audio=wav, theme_name=args.theme, crf=21, on_progress=render._cli_progress)
+    if not args.quick:
+        make_webp(os.path.join(media_dir, "demo-landscape.mp4"), os.path.join(media_dir, "demo.webp"))
     print("done")
+
+
+def make_webp(video, out, start=9.0, seconds=8.0, width=760, fps=20):
+    """The silent looping clip at the top of the README."""
+    import subprocess
+
+    from notefall import media
+
+    cmd = [media.ffmpeg_bin(), "-y", "-v", "error", "-ss", str(start), "-t", str(seconds), "-i", video,
+           "-vf", "fps=%d,scale=%d:-2:flags=lanczos" % (fps, width), "-c:v", "libwebp_anim",
+           "-quality", "72", "-compression_level", "6", "-loop", "0", "-an", out]
+    if subprocess.run(cmd).returncode == 0:
+        print("preview ->", out)
+    else:
+        print("skipped the .webp preview (this ffmpeg has no libwebp)")
 
 
 if __name__ == "__main__":

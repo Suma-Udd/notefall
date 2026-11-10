@@ -9,5 +9,5 @@ if __name__ == "__main__":
         # dropped a file on the app, or called from a terminal: act like the CLI
         from notefall.cli import main
     else:
-        from notefall.gui import main
+        from notefall.app import main
     sys.exit(main())

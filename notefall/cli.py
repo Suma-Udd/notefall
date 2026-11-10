@@ -50,7 +50,7 @@ def build_parser():
                    help="phone = 1080x1920 (TikTok, Reels, Shorts), youtube = 1920x1080, "
                         "square = 1080x1080 (default: phone)")
     p.add_argument("--size", help="exact WxH in pixels, overrides --format")
-    p.add_argument("--fps", type=int, default=30, help="frames per second (default 30)")
+    p.add_argument("--fps", type=int, default=60, help="frames per second (default 60, 30 renders twice as fast)")
     p.add_argument("--theme", default=theme.DEFAULT_THEME, choices=list(theme.THEMES),
                    help="colour palette (default: %s)" % theme.DEFAULT_THEME)
     p.add_argument("--lookahead", type=float,
@@ -168,7 +168,7 @@ def main(argv=None):
 
     if args.input is None:
         try:
-            from .gui import main as gui_main
+            from .app import main as gui_main
         except ImportError as exc:  # Python built without tkinter
             parser.print_help()
             print("\n(the app window needs tkinter, which this Python doesn't have: %s)" % exc)

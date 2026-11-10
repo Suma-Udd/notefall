@@ -6,6 +6,6 @@ dist/
 *.egg-info/
 .pytest_cache/
 examples/*.wav
-media/demo-quick.mp4
+docs/media/demo-quick.mp4
 *.part.mp4
 *-notefall.mp4

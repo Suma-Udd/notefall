@@ -1,7 +1,7 @@
 """Audio or video recording to MIDI.
 
 This runs Spotify's Basic Pitch model (Apache 2.0, see
-notefall/models/LICENSE-basic-pitch.txt) directly through onnxruntime.
+notefall/assets/models/LICENSE-basic-pitch.txt) directly through onnxruntime.
 
 The upstream `basic-pitch` package drags in TensorFlow, CoreML or tflite
 depending on your OS and Python version, and on Python 3.12+ it often can't
@@ -18,7 +18,7 @@ import numpy as np
 
 from . import media
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "nmp.onnx")
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "models", "nmp.onnx")
 
 # constants from basic_pitch.constants
 FFT_HOP = 256
