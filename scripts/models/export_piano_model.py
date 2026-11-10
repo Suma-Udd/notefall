@@ -6,7 +6,7 @@ The model is "High-resolution Piano Transcription with Pedals by Regressing
 Onset and Offset Times" (Kong et al., 2021), code MIT licensed in
 piano_transcription_inference. This runs once in CI (the piano-model
 workflow), so NoteFall itself never needs PyTorch. The ONNX file takes 10 s
-of 16 kHz mono audio per row and returns the seven output rolls.
+of 16 kHz mono audio (shape 1 x 160000) and returns the seven output rolls.
 
 With TEST_AUDIO it also checks the ONNX outputs against PyTorch and writes
 the reference notes PyTorch finds, so the numpy post-processing in
@@ -48,9 +48,9 @@ def main():
     model.eval()
 
     path = os.path.join(out_dir, "piano-transcription.onnx")
-    dummy = torch.randn(2, SEGMENT) * 0.05
+    # batch of one: the GRUs bake their starting state's shape in at export time
+    dummy = torch.randn(1, SEGMENT) * 0.05
     torch.onnx.export(Wrap(model), dummy, path, input_names=["audio"], output_names=OUTPUTS,
-                      dynamic_axes={"audio": {0: "batch"}, **{k: {0: "batch"} for k in OUTPUTS}},
                       opset_version=17, do_constant_folding=True, dynamo=False)
     print("exported", path, os.path.getsize(path) // 1_000_000, "MB")
 
@@ -65,11 +65,14 @@ def main():
         for i in range(3):
             chunk = audio[i * SEGMENT // 2: i * SEGMENT // 2 + SEGMENT]
             seg[i, :len(chunk)] = chunk
-        with torch.no_grad():
-            ref = Wrap(model)(torch.from_numpy(seg))
         sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
-        got = sess.run(None, {"audio": seg})
-        diffs = {k: float(np.abs(r.numpy() - g).max()) for k, r, g in zip(OUTPUTS, ref, got)}
+        diffs = {k: 0.0 for k in OUTPUTS}
+        for i in range(3):
+            with torch.no_grad():
+                ref = Wrap(model)(torch.from_numpy(seg[i:i + 1]))
+            got = sess.run(None, {"audio": seg[i:i + 1]})
+            for k, r, g in zip(OUTPUTS, ref, got):
+                diffs[k] = max(diffs[k], float(np.abs(r.numpy() - g).max()))
         print("max abs diff onnx vs torch:", diffs)
         info["max_abs_diff"] = diffs
         assert max(diffs.values()) < 1e-3, diffs
