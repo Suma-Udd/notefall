@@ -1,6 +1,11 @@
 """Audio or video recording to MIDI.
 
-This runs Spotify's Basic Pitch model (Apache 2.0, see
+There are two listeners. The default is a model trained only on piano
+(notefall/piano.py), which is far more accurate on piano recordings and also
+hears the sustain pedal. Basic Pitch is the small fallback for when that
+model can't be fetched, or for instruments that aren't piano.
+
+Basic Pitch is Spotify's model (Apache 2.0, see
 notefall/assets/models/LICENSE-basic-pitch.txt) directly through onnxruntime.
 
 The upstream `basic-pitch` package drags in TensorFlow, CoreML or tflite
@@ -33,11 +38,11 @@ N_OVERLAPPING_FRAMES = 30
 ENERGY_TOL = 11
 
 
-def load_audio(media_path):
-    """Decode any audio or video file to mono float32 at 22050 Hz with ffmpeg."""
+def load_audio(media_path, sr=AUDIO_SAMPLE_RATE):
+    """Decode any audio or video file to mono float32 at `sr` Hz with ffmpeg."""
     proc = subprocess.run(
         [media.ffmpeg_bin(), "-v", "error", "-i", media_path, "-vn",
-         "-ac", "1", "-ar", str(AUDIO_SAMPLE_RATE), "-f", "f32le", "-"],
+         "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
         capture_output=True, **media.NO_WINDOW,
     )
     if proc.returncode != 0:
@@ -213,37 +218,87 @@ def decode_notes(frames, onsets, onset_thresh=0.5, frame_thresh=0.3, min_note_le
     return events
 
 
-def transcribe(media_path, midi_out=None, onset_threshold=0.65, frame_threshold=0.3,
-               minimum_note_length=58.0, minimum_frequency=None, maximum_frequency=None,
-               on_progress=None):
-    """Listen to a recording and write a MIDI file. Returns the .mid path.
-
-    Thresholds matter. A pedaled acoustic piano blurs note boundaries, so
-    raise `onset_threshold` if you get ghost notes and lower it if real
-    notes are missing. `minimum_note_length` is in milliseconds.
-    """
-    import pretty_midi
-
-    audio = load_audio(media_path)
+def basic_pitch_notes(audio, onset_threshold=0.65, frame_threshold=0.3,
+                      minimum_note_length=58.0, minimum_frequency=None,
+                      maximum_frequency=None, on_progress=None):
+    """22050 Hz audio -> [(start, end, pitch, velocity)] with Basic Pitch."""
     frames, onsets = run_model(audio, on_progress=on_progress)
     min_len = int(np.round(minimum_note_length / 1000 * (AUDIO_SAMPLE_RATE / FFT_HOP)))
     events = decode_notes(frames, onsets, onset_thresh=onset_threshold,
                           frame_thresh=frame_threshold, min_note_len=min_len,
                           min_freq=minimum_frequency, max_freq=maximum_frequency)
-
     times = _frames_to_time(frames.shape[0])
-    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
-    piano = pretty_midi.Instrument(program=0, name="piano")
+    notes = []
     for start, end, pitch, amp in events:
         s, e = float(times[start]), float(times[min(end, len(times) - 1)])
-        if e - s <= 0:
-            continue
-        piano.notes.append(pretty_midi.Note(velocity=int(np.clip(np.round(127 * amp), 1, 127)),
-                                            pitch=pitch, start=max(0.0, s), end=e))
-    piano.notes.sort(key=lambda n: (n.start, n.pitch))
+        if e - s > 0:
+            notes.append((max(0.0, s), e, pitch, int(np.clip(np.round(127 * amp), 1, 127))))
+    return notes
+
+
+def write_midi(notes, pedals, path):
+    import pretty_midi
+
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    piano = pretty_midi.Instrument(program=0, name="piano")
+    for s, e, pitch, vel in sorted(notes, key=lambda n: (n[0], n[2])):
+        piano.notes.append(pretty_midi.Note(velocity=int(vel), pitch=int(pitch),
+                                            start=float(s), end=float(e)))
+    for down, up in pedals:
+        piano.control_changes.append(pretty_midi.ControlChange(64, 127, float(down)))
+        piano.control_changes.append(pretty_midi.ControlChange(64, 0, float(up)))
     pm.instruments.append(piano)
+    pm.write(path)
+    return path
+
+
+def _in_range(notes, lo_hz, hi_hz):
+    lo = -1 if lo_hz is None else _hz_to_midi(lo_hz) - 0.5
+    hi = 999 if hi_hz is None else _hz_to_midi(hi_hz) + 0.5
+    return [n for n in notes if lo <= n[2] <= hi]
+
+
+def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
+               frame_threshold=None, minimum_note_length=None, minimum_frequency=None,
+               maximum_frequency=None, on_progress=None, on_status=None):
+    """Listen to a recording and write a MIDI file. Returns the .mid path.
+
+    `engine` is "piano" (the piano model), "basic" (Basic Pitch) or "auto"
+    (piano, falling back to Basic Pitch if the model can't be fetched).
+    Thresholds left as None use each engine's own default. Raise
+    `onset_threshold` if you get ghost notes, lower it if soft notes go
+    missing. `minimum_note_length` is in milliseconds.
+    """
+    from . import piano
+
+    notes = pedals = None
+    if engine in ("auto", "piano"):
+        try:
+            audio = load_audio(media_path, sr=piano.SAMPLE_RATE)
+            notes, pedals = piano.transcribe(
+                audio, on_progress=on_progress, on_status=on_status,
+                onset_threshold=0.3 if onset_threshold is None else onset_threshold,
+                frame_threshold=0.1 if frame_threshold is None else frame_threshold)
+            if minimum_note_length:
+                notes = [n for n in notes if n[1] - n[0] >= minimum_note_length / 1000]
+        except media.NotefallError as exc:
+            if engine == "piano":
+                raise
+            if on_status:
+                on_status("Couldn't get the piano model, using the basic listener instead (%s)"
+                          % str(exc).splitlines()[0])
+    if notes is None:
+        audio = load_audio(media_path)
+        notes = basic_pitch_notes(
+            audio, on_progress=on_progress,
+            onset_threshold=0.65 if onset_threshold is None else onset_threshold,
+            frame_threshold=0.3 if frame_threshold is None else frame_threshold,
+            minimum_note_length=58.0 if minimum_note_length is None else minimum_note_length)
+        pedals = []
+    notes = _in_range(notes, minimum_frequency, maximum_frequency)
+    if not notes:
+        raise media.NotefallError("couldn't hear any notes in %s" % os.path.basename(media_path))
 
     if midi_out is None:
         midi_out = media.temp_path(".mid")
-    pm.write(midi_out)
-    return midi_out
+    return write_midi(notes, pedals, midi_out)

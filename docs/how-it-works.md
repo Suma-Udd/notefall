@@ -21,11 +21,13 @@ notefall/
   app.py          the app window
   cli.py          the notefall command
   render.py       draws frames and talks to ffmpeg
-  paper.py        the Paper look: sketched notes, labelled keys and the animated hands
+  paper.py        the Paper look: sketched notes and labelled keys
+  hands.py        the animated hands, planned once and drawn on any look
   chords.py       names the chord that's playing
   keyboard.py     key layout, hands and the sustain pedal
   synth.py        the built in piano sound
-  transcribe.py   recording -> notes
+  transcribe.py   recording -> notes, picks the listener and writes the MIDI
+  piano.py        the piano-only listener (ByteDance model on onnxruntime, downloaded once)
   theme.py        the colour themes
   media.py        finding ffmpeg, reading audio, friendly errors
   icon.py         the app icon, drawn in code

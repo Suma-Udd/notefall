@@ -17,6 +17,7 @@ import pretty_midi
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from . import keyboard, media, theme
+from .hands import HandsMixin
 
 FORMATS = {
     "phone": (1080, 1920),
@@ -182,11 +183,11 @@ def kb_top_band(kb_top, ww):
 VEL_STEPS = 6
 
 
-class Renderer:
+class Renderer(HandsMixin):
     """Holds everything that stays the same between frames."""
 
     def __init__(self, notes, width, height, fps, lookahead, pal, title, progress,
-                 downbeats, particles, duration, pedal=()):
+                 downbeats, particles, duration, pedal=(), hands=False):
         self.notes = notes
         self.pedal = list(pedal)
         self.W, self.H = width, height
@@ -209,7 +210,10 @@ class Renderer:
 
         self.bar_h = max(4, int(height * 0.0035)) if progress else 0
         self.kb_h = int(min(height * 0.2, max(height * 0.1, ww * 4.4)))
-        self.kb_top = height - self.kb_h
+        # with hands, leave room under the keys for the palms
+        portrait = height > width * 1.2
+        self.below_h = int(ww * (2.6 if portrait else 1.5)) if hands else 0
+        self.kb_top = height - self.kb_h - self.below_h
         self.lookahead = lookahead or default_lookahead(self.kb_top)
         self.pps = self.kb_top / self.lookahead
 
@@ -234,6 +238,7 @@ class Renderer:
         self.band_top = max(0, int(kb_top_band(self.kb_top, ww)))
 
         self._lit_cache = {}
+        self._init_hands(hands, self.felt_h, self.white_h, self.black_h)
         self._build_static()
 
     # static layers -------------------------------------------------------
@@ -246,6 +251,7 @@ class Renderer:
         self.ends = self.ends + lead_in
         self.downbeats = downbeats
         self.duration = duration
+        self._shift_hands(lead_in)
 
     def _build_static(self):
         W, H, pal = self.W, self.H, self.pal
@@ -267,6 +273,8 @@ class Renderer:
         noise = np.random.default_rng(5).integers(-1, 2, size=arr.shape[:2], dtype=np.int16)
         arr = np.clip(arr + noise[:, :, None], 0, 255).astype(np.uint8)
         self.background = Image.fromarray(arr)
+        if self.below_h:
+            ImageDraw.Draw(self.background).rectangle([0, self.kb_top + self.kb_h, W, H], fill=pal["panel"])
 
         self.kb_base = self._draw_keyboard()
         self.black_layer = self._draw_black_keys()
@@ -535,6 +543,7 @@ class Renderer:
         glow = glow.filter(ImageFilter.GaussianBlur(blur)).resize(
             (glow.width * gs, glow.height * gs), Image.BILINEAR).crop((0, 0, W, bh))
         img.paste(ImageChops.screen(img.crop((0, oy, W, H)), glow), (0, oy))
+        self.draw_hands(img, t)
         d = ImageDraw.Draw(img, "RGBA")
 
         if self.pedal:
@@ -579,7 +588,7 @@ def make_renderer(notes, width, height, fps, lookahead, pal, title, progress, do
         return PaperRenderer(notes, width, height, fps, lookahead, pal, title, progress,
                              downbeats, particles, duration, pedal=pedal, hands=hands)
     return Renderer(notes, width, height, fps, lookahead, pal, title, progress, downbeats,
-                    particles, duration, pedal=pedal)
+                    particles, duration, pedal=pedal, hands=hands)
 
 
 def default_workers():

@@ -45,6 +45,7 @@ def main():
         "--specpath", build,
         "--add-data", "%s%snotefall/assets" % (os.path.join(ROOT, "notefall", "assets"), sep),
         "--collect-data", "imageio_ffmpeg",
+        "--collect-data", "certifi",
         "--collect-binaries", "onnxruntime",
         "--hidden-import", "notefall.app",
         "--hidden-import", "notefall.cli",

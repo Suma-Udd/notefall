@@ -30,7 +30,7 @@
 ## What it does
 
 - **MIDI in, video out.** Every note lands on the exact key, left hand in one colour, right hand in another.
-- **No MIDI? Use a recording.** An mp3, a phone recording or a video of someone playing. NoteFall listens, writes down the notes and keeps the real sound.
+- **No MIDI? Use a recording.** An mp3, a phone recording or a video of someone playing. NoteFall listens with a piano-only model, writes down the notes (and the pedal) and keeps the real sound. It's free and runs on your computer. MIDI is exact, a recording is a very good guess.
 - **Ready to post.** Phone (TikTok, Reels, Shorts), YouTube or square, in 60 fps.
 - **Never silent.** A MIDI on its own gets a piano sound made for it, sustain pedal and all.
 - **Two looks.** Glowing notes on a dark stage, or the new **Paper** look: a sketchbook page with hand drawn notes, every key and note named, the chord on screen and two hands that actually play the keys. No sheet music needed.
@@ -103,6 +103,6 @@ Want to know more? The **[guide](docs/guide.md)** covers where to find MIDI file
 
 ## Credits
 
-Recording to notes uses [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify (Apache 2.0). Text is set in [Inter](https://rsms.me/inter/) (OFL). MIDI reading by [pretty_midi](https://github.com/craffel/pretty-midi), video by [FFmpeg](https://ffmpeg.org). The Basic Pitch and Inter licenses live in [`notefall/assets`](notefall/assets).
+Recording to notes uses ByteDance's [piano transcription](https://github.com/bytedance/piano_transcription) model (Kong et al., code MIT, see [`docs/licenses/piano-transcription.md`](docs/licenses/piano-transcription.md)), with [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify (Apache 2.0) as the fallback. Text is set in [Inter](https://rsms.me/inter/) (OFL). MIDI reading by [pretty_midi](https://github.com/craffel/pretty-midi), video by [FFmpeg](https://ffmpeg.org). The Basic Pitch and Inter licenses live in [`notefall/assets`](notefall/assets).
 
 NoteFall itself is MIT licensed, see [LICENSE](LICENSE).

@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from notefall import chords, cli, keyboard, media, paper, render, synth, theme, transcribe  # noqa: E402
+from notefall import chords, cli, hands, keyboard, media, piano, render, synth, theme, transcribe  # noqa: E402
 
 
 class FakeNote:
@@ -188,10 +188,10 @@ def test_chord_timeline_ignores_flickers():
 
 def test_paper_frames_in_every_format():
     pm = _pedal_midi()
-    for hands in (True, False):
+    for with_hands in (True, False):
         for w, h in render.FORMATS.values():
             img = render.preview(pm, width=w // 4, height=h // 4, theme_name="paper", title="hi",
-                                 hands=hands)
+                                 hands=with_hands)
             assert img.size == (w // 4 // 2 * 2, h // 4 // 2 * 2)
 
 
@@ -199,7 +199,7 @@ def test_hands_press_the_right_keys():
     notes = [(1.0, 1.5, 60, 100, True), (1.0, 1.5, 64, 100, True), (2.0, 2.4, 72, 100, True),
              (1.0, 2.0, 48, 80, False)]
     geo, ww, _ = keyboard.build_keys(0, 1000, 36, 84)
-    plan = paper.HandPlan(notes, geo, ww, True, 0, 1000)
+    plan = hands.HandPlan(notes, geo, ww, True, 0, 1000)
     pressed = []
     for f in range(5):
         x, press, _ = plan.finger(f, 1.2, 500)
@@ -210,7 +210,7 @@ def test_hands_press_the_right_keys():
     # nothing is pressed between notes, and the hand has moved up for the C5 by the time it plays
     assert all(plan.finger(f, 1.8, 500)[1] < 0.5 for f in range(5))
     assert abs(plan.center(2.0)[0] - plan.center(1.2)[0]) > ww
-    assert sum(len(f) for f in paper.HandPlan(notes, geo, ww, False, 0, 1000).fingers) == 1
+    assert sum(len(f) for f in hands.HandPlan(notes, geo, ww, False, 0, 1000).fingers) == 1
 
 
 def test_paper_frames_are_the_same_in_any_order():
@@ -308,7 +308,7 @@ def test_recording_round_trip(tmp_path):
     wav = str(tmp_path / "take.wav")
     synth.synth(pm, wav)
 
-    midi = transcribe.transcribe(wav, midi_out=str(tmp_path / "heard.mid"))
+    midi = transcribe.transcribe(wav, midi_out=str(tmp_path / "heard.mid"), engine="basic")
     heard = [(n.start, n.pitch) for i in pretty_midi.PrettyMIDI(midi).instruments for n in i.notes]
     found = sum(any(abs(s - n.start) < 0.06 and p == n.pitch for s, p in heard)
                 for n in piano.notes)
@@ -325,6 +325,86 @@ def test_decode_matches_scipy_style_peaks():
     notes = transcribe.decode_notes(frames, onsets, onset_thresh=0.5, frame_thresh=0.3,
                                     min_note_len=5)
     assert [(n[0], n[1], n[2]) for n in notes] == [(10, 40, 60)]
+
+
+def _piano_rolls(n=300):
+    import numpy as np
+
+    out = {k: np.zeros((n, 88)) for k in piano.OUTPUTS[:4]}
+    out.update({k: np.zeros((n, 1)) for k in piano.OUTPUTS[4:]})
+    # middle C from 0.5 s to 1.5 s, hit fairly hard
+    k = 60 - piano.BEGIN_NOTE
+    out["reg_onset_output"][48:53, k] = [0.2, 0.6, 0.9, 0.6, 0.2]
+    out["frame_output"][50:150, k] = 0.9
+    out["reg_offset_output"][146:155, k] = [0.1, 0.2, 0.4, 0.7, 0.9, 0.7, 0.4, 0.2, 0.1]
+    out["velocity_output"][50, k] = 0.7
+    # pedal down at 1 s, up at 2 s
+    out["pedal_frame_output"][100:200, 0] = 0.9
+    out["reg_pedal_offset_output"][196:205, 0] = [0.1, 0.2, 0.4, 0.7, 0.9, 0.7, 0.4, 0.2, 0.1]
+    return out
+
+
+def test_piano_decode_finds_notes_and_pedal():
+    notes, pedals = piano.decode(_piano_rolls())
+    assert len(notes) == 1
+    s, e, p, v = notes[0]
+    assert p == 60 and abs(s - 0.5) < 0.02 and abs(e - 1.5) < 0.02 and v == int(0.7 * 128)
+    assert len(pedals) == 1 and abs(pedals[0][0] - 1.0) < 0.02 and abs(pedals[0][1] - 2.0) < 0.02
+
+
+def test_piano_stitches_overlapping_windows():
+    import numpy as np
+
+    class Fake:
+        def run(self, _, feed):
+            x = feed["audio"]
+            # each output frame reports which sample it came from, so stitching is checkable
+            t = (np.arange(1001) * 160 / 16000)[None, :, None]
+            base = t + x[:, :1, None] * 0
+            return [np.repeat(base, 88 if i < 4 else 1, axis=2) for i in range(7)]
+
+    seen = []
+    orig = piano._session
+    piano._session = lambda path: Fake()
+    try:
+        audio = np.zeros(16000 * 25, np.float32)
+        out = piano.run_model(audio, "x", on_progress=seen.append)
+    finally:
+        piano._session = orig
+    assert seen[-1] == 1.0
+    assert out["frame_output"].shape == (2501, 88)
+
+
+def test_midi_from_notes_keeps_the_pedal(tmp_path):
+    path = transcribe.write_midi([(0.5, 1.0, 60, 90), (0.6, 1.2, 64, 70)], [(0.4, 1.5)],
+                                 str(tmp_path / "x.mid"))
+    pm = pretty_midi.PrettyMIDI(path)
+    assert [(n.pitch, n.velocity) for n in pm.instruments[0].notes] == [(60, 90), (64, 70)]
+    assert [(c.number, c.value) for c in pm.instruments[0].control_changes] == [(64, 127), (64, 0)]
+
+
+@pytest.mark.skipif(piano.model_path() is None, reason="piano model not downloaded")
+def test_piano_model_hears_a_melody(tmp_path):
+    pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0)
+    melody = [60, 64, 67, 72, 67, 64, 62, 65, 69, 74]
+    for i, p in enumerate(melody):
+        inst.notes.append(pretty_midi.Note(90, p, 0.5 + i * 0.4, 0.5 + i * 0.4 + 0.35))
+    pm.instruments.append(inst)
+    wav = str(tmp_path / "take.wav")
+    synth.synth(pm, wav)
+    midi = transcribe.transcribe(wav, midi_out=str(tmp_path / "heard.mid"), engine="piano")
+    heard = [(n.start, n.pitch) for i in pretty_midi.PrettyMIDI(midi).instruments for n in i.notes]
+    found = sum(any(abs(s - n.start) < 0.06 and p == n.pitch for s, p in heard) for n in inst.notes)
+    assert found >= len(melody) - 1
+
+
+def test_hands_on_a_glow_look():
+    pm = _pedal_midi()
+    with_hands = render.preview(pm, width=270, height=480, theme_name="default", hands=True)
+    without = render.preview(pm, width=270, height=480, theme_name="default", hands=False)
+    assert with_hands.size == without.size == (270, 480)
+    assert with_hands.tobytes() != without.tobytes()
 
 
 def test_update_version_compare():

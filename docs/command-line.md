@@ -29,7 +29,7 @@ notefall song.mid --sustain pedal
 | `--format` | `phone` (1080x1920, default), `youtube` (1920x1080) or `square` (1080x1080) |
 | `--size WxH` | any exact size, like `1440x2560` |
 | `--fps N` | frames per second. Default 60, and 30 renders twice as fast |
-| `--theme` | `default`, `sunset`, `ocean`, `neon`, `gold` or `paper` (sketchbook look with hands and chord names) |
+| `--theme` | `default`, `sunset`, `ocean`, `neon`, `gold` or `paper` (sketchbook look with note and chord names) |
 | `--title TEXT` | text in the top left |
 | `--audio FILE` | sound to put under the video |
 | `--silent` | no sound at all |
@@ -39,9 +39,10 @@ notefall song.mid --sustain pedal
 | `--lookahead SECONDS` | how much of the future you see above the keys |
 | `--lead-in SECONDS` | wait before the first note lands |
 | `--no-sparks`, `--no-bar-lines`, `--no-progress` | turn those bits off |
-| `--no-hands` | hide the hands in the paper look |
+| `--no-hands` | hide the animated hands |
 | `--workers N` | how many CPU cores to draw with |
 | `--keep-midi FILE` | save the notes heard in a recording, so you can fix them and render again |
+| `--engine` | how recordings are listened to: `piano` (piano-only model, downloaded once), `basic` (Basic Pitch, small, any instrument) or `auto` (piano, falling back to basic) |
 | `--onset-threshold`, `--min-note-ms` | recording tuning. A higher threshold means fewer made up notes, lower catches soft notes |
 
 Run `notefall --help` for the full list.
