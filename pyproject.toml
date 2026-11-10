@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "notefall"
-version = "0.3.0"
+version = "0.4.0"
 description = "Turn a MIDI file or a piano recording into a falling notes piano video. App window or one command."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE", "notefall/assets/models/LICENSE-basic-pitch.txt", "notefall/assets/models/NOTICE-basic-pitch.txt", "notefall/assets/fonts/LICENSE-Inter.txt"]
+license-files = ["LICENSE", "notefall/assets/models/LICENSE-basic-pitch.txt", "notefall/assets/models/NOTICE-basic-pitch.txt", "notefall/assets/fonts/LICENSE-Inter.txt", "notefall/assets/fonts/LICENSE-Kalam.txt"]
 authors = [{ name = "Sumayer Uddin" }]
 keywords = ["midi", "piano", "visualizer", "falling notes", "piano roll", "ffmpeg", "music", "video", "transcription"]
 classifiers = [

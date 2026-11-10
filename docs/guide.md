@@ -41,12 +41,13 @@ Recordings don't carry pedal information, so their blocks simply follow how long
 | setting | what it does |
 | --- | --- |
 | Format | Phone is 1080 × 1920 for TikTok, Reels and Shorts. YouTube is 1920 × 1080. Square is 1080 × 1080. |
-| Colours | Five colour themes. The preview shows each one. |
+| Look | Five glowing colour themes, plus **Paper**: a sketchbook page with every note and key named, the chord that's playing, and two drawn hands that play along. The preview shows each one. |
 | Title | Text in the top corner. Leave it empty for none. |
 | Sound | **Piano** makes a piano sound from your MIDI. **Recording** uses your own audio or video file. **None** makes a silent video. |
 | Smooth motion | 60 frames a second. Turn it off for 30, which renders twice as fast. |
 | Notes ring with the pedal | See [the sustain pedal](#the-sustain-pedal). |
-| Sparks | The little sparks where notes hit the keys. |
+| Sparks | The little sparks where notes hit the keys (pencil marks in the Paper look). |
+| Hands on the keys | The two animated hands in the Paper look. They glide to where the music goes next and press each key with a finger, so you can see roughly how it's played. They're a guide, not a teacher's fingering. |
 
 ## Questions
 

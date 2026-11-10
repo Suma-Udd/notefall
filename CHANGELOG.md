@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
+- A new look, **Paper**: a warm sketchbook page, hand drawn note blocks with the note name on each one, a keyboard with every key labelled, and the chord that's playing (with the next one coming up).
+- Two animated hands play along in the Paper look. They glide to where the music goes next, lift a finger just before a note and press it down on the beat, with a soft shadow on the keys. Turn them off with the new toggle or `--no-hands`.
+- Bundled the Kalam handwriting font (SIL Open Font License) for the Paper look.
 - A real Windows installer: one Setup.exe, installs per user with no admin prompt, Start menu entry, optional desktop icon, clean uninstall.
 - Mac downloads are now a .dmg you drag onto Applications.
 - The app tells you when a new version is out. On Windows it updates itself in one click.

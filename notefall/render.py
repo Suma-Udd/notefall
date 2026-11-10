@@ -196,6 +196,7 @@ class Renderer:
         self.progress = progress
         self.duration = duration
         self.downbeats = downbeats
+        self.lookahead_arg = lookahead
 
         self.starts = np.array([n[0] for n in notes])
         self.ends = np.array([n[1] for n in notes])
@@ -569,6 +570,18 @@ def _worker_frame(t):
     return _WORKER.frame(t).tobytes()
 
 
+def make_renderer(notes, width, height, fps, lookahead, pal, title, progress, downbeats,
+                  particles, duration, pedal=(), hands=True):
+    """The right Renderer for the theme: the glowing default or the Paper look."""
+    if pal.get("style") == "paper":
+        from .paper import PaperRenderer
+
+        return PaperRenderer(notes, width, height, fps, lookahead, pal, title, progress,
+                             downbeats, particles, duration, pedal=pedal, hands=hands)
+    return Renderer(notes, width, height, fps, lookahead, pal, title, progress, downbeats,
+                    particles, duration, pedal=pedal)
+
+
 def default_workers():
     return max(1, min(8, (os.cpu_count() or 2) - 1))
 
@@ -589,6 +602,7 @@ def render(
     particles=True,
     split=None,
     sustain="keys",
+    hands=True,
     on_progress=None,
     cancel=None,
     crf=17,
@@ -631,8 +645,8 @@ def render(
     # probe the audio before deciding how long the video is
     audio_len = media.duration(audio) if audio else 0.0
 
-    r = Renderer(notes, width, height, fps, lookahead, pal, title, progress, [],
-                 particles, 1.0, pedal=pedal)
+    r = make_renderer(notes, width, height, fps, lookahead, pal, title, progress, [],
+                      particles, 1.0, pedal=pedal, hands=hands)
     # shift everything so the first notes fall in from the top of the screen
     if lead_in is None:
         lead_in = max(0.0, r.lookahead * LEAD_FRACTION - first)
@@ -714,7 +728,8 @@ def render(
 
 
 def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
-                   sustain="keys", split=None, at=None, count=1, fps=20, particles=True):
+                   sustain="keys", split=None, at=None, count=1, fps=20, particles=True,
+                   hands=True):
     """A few frames from a moment in the song, for a live preview."""
     pm = pretty_midi.PrettyMIDI(os.fspath(midi)) if isinstance(midi, (str, os.PathLike)) else midi
     notes = collect_notes(pm, split=split, sustain=sustain)
@@ -722,8 +737,8 @@ def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, 
         raise media.NotefallError("no piano notes found in that MIDI")
     width, height = max(64, int(width) // 2 * 2), max(64, int(height) // 2 * 2)
     pedal = keyboard.pedal_intervals(pm.instruments)
-    r = Renderer(notes, width, height, fps, None, theme.get(theme_name), title, True, [],
-                 particles, 1.0, pedal=pedal)
+    r = make_renderer(notes, width, height, fps, None, theme.get(theme_name), title, True, [],
+                      particles, 1.0, pedal=pedal, hands=hands)
     end = max(n[1] for n in notes)
     r.shift(0.0, [], end + TAIL)
     if at is None:
