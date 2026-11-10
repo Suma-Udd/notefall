@@ -269,3 +269,13 @@ def test_decode_matches_scipy_style_peaks():
     notes = transcribe.decode_notes(frames, onsets, onset_thresh=0.5, frame_thresh=0.3,
                                     min_note_len=5)
     assert [(n[0], n[1], n[2]) for n in notes] == [(10, 40, 60)]
+
+
+def test_update_version_compare():
+    from notefall.update import is_newer
+
+    assert is_newer("v0.4.0", "0.3.0")
+    assert is_newer("v1.0.0", "0.10.2")
+    assert not is_newer("v0.3.0", "0.3.0")
+    assert not is_newer("v0.2.9", "0.3.0")
+    assert not is_newer("nightly", "0.3.0")

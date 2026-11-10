@@ -393,6 +393,8 @@ class App:
             var.trace_add("write", lambda *_: self.schedule_preview())
         self.root.after(80, self._poll)
         self.root.after(PREVIEW_FPS and int(1000 / PREVIEW_FPS), self._tick)
+        self.update_info = None
+        self.root.after(1500, self._check_update)
 
     # setup ---------------------------------------------------------------
 
@@ -454,6 +456,9 @@ class App:
         head.pack(fill="x")
         self._label(head, "NoteFall", self.f_title).pack(side="left")
         self._label(head, __version__, self.f_small, fg=FAINT).pack(side="left", padx=(8, 0), pady=(8, 0))
+        # shown when a newer version is out
+        self.update_link = self._label(head, "", self.f_small, fg=ACCENT, cursor="hand2")
+        self.update_link.bind("<Button-1>", lambda e: self._update_click())
         self._label(side, "Piano music in. Falling notes out.", self.f_body, fg=SUB).pack(anchor="w")
 
         # song
@@ -773,6 +778,61 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
+    # updates -------------------------------------------------------------
+
+    def _check_update(self):
+        from . import update
+
+        threading.Thread(target=lambda: self.events.put(("update", update.check())),
+                         daemon=True).start()
+
+    def _update_click(self):
+        from . import update
+
+        info = self.update_info
+        if not info or self.busy:
+            return
+        if not (info["setup"] and update.installed_with_setup()):
+            import webbrowser
+
+            webbrowser.open(info["page"])
+            return
+        if not messagebox.askyesno("NoteFall", "NoteFall %s is out. Update now?\n\n"
+                                   "It downloads, installs and reopens by itself." % info["version"]):
+            return
+        self.update_link.configure(text="Downloading…", cursor="")
+        self.update_info = None
+
+        def work():
+            try:
+                path = update.download(info["setup"], lambda f: self.events.put(("update_progress", f)))
+                self.events.put(("update_ready", path))
+            except Exception as e:
+                self.events.put(("update_failed", str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_update_event(self, kind, value):
+        if kind == "update" and value:
+            self.update_info = value
+            self.update_link.configure(text="Update to %s" % value["version"])
+            self.update_link.pack(side="right", pady=(8, 0))
+        elif kind == "update_progress":
+            self.update_link.configure(text="Downloading %d%%" % int(value * 100))
+        elif kind == "update_ready":
+            from . import update
+
+            try:
+                update.run_installer(value)
+            except Exception as e:
+                self._on_update_event("update_failed", str(e))
+                return
+            self.root.destroy()
+        elif kind == "update_failed":
+            self.update_link.configure(text="Update failed", cursor="")
+            messagebox.showerror("NoteFall", "Couldn't update: %s\n\nYou can grab the new version "
+                                 "from the download page." % value)
+
     def _set_busy_text(self, text):
         self._busy_text = text
         self.status.set(text)
@@ -786,7 +846,9 @@ class App:
             while True:
                 ev = self.events.get_nowait()
                 kind = ev[0]
-                if kind == "preview" and ev[1] == self.preview_token:
+                if kind.startswith("update"):
+                    self._on_update_event(kind, ev[1])
+                elif kind == "preview" and ev[1] == self.preview_token:
                     self._show_frames(ev[2])
                 elif kind == "preview_error" and ev[1] == self.preview_token:
                     self.frames = []

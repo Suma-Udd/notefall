@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A real Windows installer: one Setup.exe, installs per user with no admin prompt, Start menu entry, optional desktop icon, clean uninstall.
+- Mac downloads are now a .dmg you drag onto Applications.
+- The app tells you when a new version is out. On Windows it updates itself in one click.
+- Release builds take their version from the tag you type when running the release workflow.
+
 ## 0.3.0
 
 - A new app: clean and quiet, with a live moving preview, one button, and progress right on it.
