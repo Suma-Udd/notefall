@@ -1,0 +1,54 @@
+# Builds the piano transcription model (ONNX) from the original ByteDance
+# checkpoint and publishes it as an asset on the "piano-model" release, where
+# the app and the release builds pick it up. Only needs running again if the
+# export script changes.
+name: piano-model
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/models/**"
+      - ".github/workflows/piano-model.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyTorch (CPU) and the original model code
+        run: |
+          pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install torchlibrosa==0.1.0 piano_transcription_inference==0.0.6 librosa matplotlib mido onnx onnxruntime
+      - name: Download the checkpoint
+        run: |
+          curl -fL --retry 4 -o ckpt.pth "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1"
+          ls -l ckpt.pth
+          sha256sum ckpt.pth
+          curl -fL -o test.mp3 https://raw.githubusercontent.com/qiuqiangkong/piano_transcription_inference/master/resources/cut_liszt.mp3
+      - name: Export and check
+        run: python scripts/models/export_piano_model.py ckpt.pth out test.mp3
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: piano-model
+          name: Piano model (used by the app, not a NoteFall release)
+          prerelease: true
+          make_latest: false
+          body: |
+            The piano transcription model NoteFall uses for recordings, exported to ONNX from
+            ByteDance's "High-resolution Piano Transcription with Pedals" (Kong et al., 2021).
+            Model code MIT licensed: https://github.com/bytedance/piano_transcription
+            Checkpoint: https://zenodo.org/record/4034264
+          files: |
+            out/piano-transcription.onnx
+            out/piano-transcription.json
+            out/reference.mid
+            out/reference-notes.json
+            out/reference-rolls.npz
