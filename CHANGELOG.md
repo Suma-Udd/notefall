@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- A **Check for updates** button under Create Video. It tells you if you're up to date, and when there's a new version it turns blue: one click downloads and installs it (on Mac and Linux it opens the download page).
+
 ## 0.5.0
 
 - Recordings are listened to with a model made only for piano (ByteDance's high resolution piano transcription) instead of Basic Pitch. It gets far more notes right, and hears the sustain pedal and how hard each key was hit. It's downloaded once (about 150 MB) the first time you use a recording, and Basic Pitch is still there as the fallback (`--engine`).

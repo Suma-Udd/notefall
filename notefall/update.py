@@ -20,6 +20,12 @@ API = "https://api.github.com/repos/%s/releases/latest" % REPO
 PAGE = "https://github.com/%s/releases/latest" % REPO
 
 
+def _ssl_context():
+    from .piano import _ssl_context as ctx
+
+    return ctx()
+
+
 def _parts(version):
     return tuple(int(n) for n in re.findall(r"\d+", version)[:3])
 
@@ -38,16 +44,23 @@ def installed_with_setup():
     return os.path.exists(os.path.join(os.path.dirname(sys.executable), "unins000.exe"))
 
 
-def check(timeout=6):
-    """Return {"version", "page", "setup"} when a newer release exists, else None."""
-    if not getattr(sys, "frozen", False) or os.environ.get("NOTEFALL_NO_UPDATE_CHECK"):
+def check(timeout=6, manual=False):
+    """Return {"version", "page", "setup"} when a newer release exists, else None.
+
+    The quiet check on launch only runs in the packaged app and swallows errors.
+    A `manual` check (the button) always asks GitHub and raises if it can't.
+    """
+    if not manual and (not getattr(sys, "frozen", False)
+                       or os.environ.get("NOTEFALL_NO_UPDATE_CHECK")):
         return None
     req = urllib.request.Request(API, headers={"Accept": "application/vnd.github+json",
                                                "User-Agent": "NoteFall/" + __version__})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
             data = json.load(r)
     except Exception:
+        if manual:
+            raise
         return None
     tag = data.get("tag_name") or ""
     if data.get("draft") or data.get("prerelease") or not is_newer(tag):
@@ -61,7 +74,8 @@ def download(url, on_progress=None, cancel=None):
     """Download the installer to a temp file and return its path."""
     dest = os.path.join(tempfile.gettempdir(), url.rsplit("/", 1)[-1])
     req = urllib.request.Request(url, headers={"User-Agent": "NoteFall/" + __version__})
-    with urllib.request.urlopen(req, timeout=30) as r, open(dest + ".part", "wb") as f:
+    with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as r, \
+            open(dest + ".part", "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:
