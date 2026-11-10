@@ -1,0 +1,46 @@
+name: Something's not working
+description: The app crashed, a video came out wrong, or something just looks off.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! The more you can tell, the faster it gets fixed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: I picked an mp3, clicked Create Video and it stopped at 40%...
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your computer
+      options:
+        - Windows
+        - Mac with an Apple chip
+        - Intel Mac
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NoteFall version
+      description: It's next to the name at the top of the app, like 0.5.1.
+      placeholder: "0.5.1"
+  - type: dropdown
+    id: input
+    attributes:
+      label: What were you using?
+      options:
+        - A MIDI file
+        - A recording (mp3, wav, video...)
+        - Not about a song
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, files or error text
+      description: Drag a screenshot or a small MIDI file in here. If there was an error message, paste it.
