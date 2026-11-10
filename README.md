@@ -33,7 +33,13 @@
 - **No MIDI? Use a recording.** An mp3, a phone recording or a video of someone playing. NoteFall listens, writes down the notes and keeps the real sound.
 - **Ready to post.** Phone (TikTok, Reels, Shorts), YouTube or square, in 60 fps.
 - **Never silent.** A MIDI on its own gets a piano sound made for it, sustain pedal and all.
+- **Two looks.** Glowing notes on a dark stage, or the new **Paper** look: a sketchbook page with hand drawn notes, every key and note named, the chord on screen and two hands that actually play the keys. No sheet music needed.
 - **Private and free.** Runs on your own computer. No account, no upload, no watermark.
+
+<p align="center">
+  <img src="docs/media/demo-paper.webp" width="300" alt="The Paper look: hand drawn notes, labelled keys, chord names and animated hands">
+  <br><sub>The Paper look. <a href="docs/media/demo-paper.mp4">Watch it with sound</a>.</sub>
+</p>
 
 <p align="center">
   <img src="docs/media/app.png" width="760" alt="The NoteFall app">

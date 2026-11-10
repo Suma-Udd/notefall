@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from notefall import cli, keyboard, media, render, synth, theme, transcribe  # noqa: E402
+from notefall import chords, cli, keyboard, media, paper, render, synth, theme, transcribe  # noqa: E402
 
 
 class FakeNote:
@@ -164,6 +164,62 @@ def test_frames_have_the_right_size():
     assert img.size == (270, 480)
     img = render.preview(pm, width=480, height=270, theme_name="neon", title="hi")
     assert img.size == (480, 270)
+
+
+# paper look ------------------------------------------------------------------
+
+def test_chord_names():
+    assert chords.name({0: 1, 4: 1, 7: 1}, 0) == "C"
+    assert chords.name({1: 1, 4: 1, 8: 1}, 1) == "C#m"
+    assert chords.name({7: 1, 11: 1, 2: 1, 5: 1}, 7) == "G7"
+    assert chords.name({0: 1, 4: 1}) is None
+
+
+def test_chord_timeline_ignores_flickers():
+    def block(t, pitches, d=1.0):
+        return [(t, t + d, p, 90, True) for p in pitches]
+    notes = block(0, (48, 52, 55)) + block(1.0, (50, 53, 57), 0.1) + block(1.1, (48, 52, 55))
+    line = chords.timeline(sorted(notes))
+    assert [name for _, name in line] == ["C"]
+    notes = block(0, (48, 52, 55)) + block(1.0, (45, 48, 52))
+    assert [name for _, name in chords.timeline(sorted(notes))] == ["C", "Am"]
+    assert chords.at(line, -1) == -1 and chords.at(line, 0.5) == 0
+
+
+def test_paper_frames_in_every_format():
+    pm = _pedal_midi()
+    for hands in (True, False):
+        for w, h in render.FORMATS.values():
+            img = render.preview(pm, width=w // 4, height=h // 4, theme_name="paper", title="hi",
+                                 hands=hands)
+            assert img.size == (w // 4 // 2 * 2, h // 4 // 2 * 2)
+
+
+def test_hands_press_the_right_keys():
+    notes = [(1.0, 1.5, 60, 100, True), (1.0, 1.5, 64, 100, True), (2.0, 2.4, 72, 100, True),
+             (1.0, 2.0, 48, 80, False)]
+    geo, ww, _ = keyboard.build_keys(0, 1000, 36, 84)
+    plan = paper.HandPlan(notes, geo, ww, True, 0, 1000)
+    pressed = []
+    for f in range(5):
+        x, press, _ = plan.finger(f, 1.2, 500)
+        if press > 0.5:
+            pressed.append(round(x))
+    centre = lambda p: round((geo[p][0] + geo[p][1]) / 2)
+    assert sorted(pressed) == [centre(60), centre(64)]
+    # nothing is pressed between notes, and the hand has moved up for the C5 by the time it plays
+    assert all(plan.finger(f, 1.8, 500)[1] < 0.5 for f in range(5))
+    assert abs(plan.center(2.0)[0] - plan.center(1.2)[0]) > ww
+    assert sum(len(f) for f in paper.HandPlan(notes, geo, ww, False, 0, 1000).fingers) == 1
+
+
+def test_paper_frames_are_the_same_in_any_order():
+    pm = _pedal_midi()
+    notes = render.collect_notes(pm)
+    r = render.make_renderer(notes, 270, 480, 30, None, theme.get("paper"), None, True, [], True, 3.0)
+    a = r.frame(1.0).tobytes()
+    r.frame(2.5)
+    assert r.frame(1.0).tobytes() == a
 
 
 def test_render_produces_an_mp4(tiny_midi, tmp_path):

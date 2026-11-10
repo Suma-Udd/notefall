@@ -61,9 +61,22 @@ THEMES = {
         "accent": (255, 210, 120),
         "felt": (70, 40, 16),
     },
+    "paper": {
+        "label": "Paper (sketchbook with hands)",
+        "style": "paper",
+        "bg_top": (240, 235, 224),
+        "bg_bottom": (226, 218, 203),
+        "right": (232, 158, 138),
+        "right_hi": (238, 118, 92),
+        "left": (146, 176, 212),
+        "left_hi": (96, 140, 214),
+        "accent": (52, 42, 38),
+        "text": (52, 42, 38),
+    },
 }
 
 _BASE = {
+    "style": "glow",
     "panel": (8, 8, 12),
     "felt": (110, 20, 28),
     "white": (242, 242, 246),

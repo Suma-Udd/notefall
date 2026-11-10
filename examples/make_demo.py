@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the demo from scratch: Bach's Prelude in C (BWV 846), bars 1 to 19.
 
-    python examples/make_demo.py            # docs/media/demo.mp4, the landscape one and demo.webp
+    python examples/make_demo.py            # every demo video and the .webp previews
+    python examples/make_demo.py --paper    # only the Paper look demo
     python examples/make_demo.py --quick    # small fast preview
 
 Writes examples/prelude_in_c.mid (the MIDI is generated here, not
@@ -97,6 +98,7 @@ def main():
     ap.add_argument("--quick", action="store_true", help="small, fast preview render")
     ap.add_argument("--soundfont", help="use a .sf2 piano through FluidSynth for the audio")
     ap.add_argument("--theme", default="default")
+    ap.add_argument("--paper", action="store_true", help="only render the Paper look demo")
     args = ap.parse_args()
 
     ex = os.path.join(ROOT, "examples")
@@ -106,16 +108,23 @@ def main():
     wav = synth.synth(midi, os.path.join(ex, "prelude_in_c.wav"), soundfont=args.soundfont)
     print("audio ->", wav)
 
-    jobs = [("demo.mp4", 1080, 1920), ("demo-landscape.mp4", 1920, 1080)]
+    jobs = [("demo.mp4", 1080, 1920, args.theme), ("demo-landscape.mp4", 1920, 1080, args.theme),
+            ("demo-paper.mp4", 1080, 1920, "paper")]
+    if args.paper:
+        jobs = jobs[2:]
     if args.quick:
-        jobs = [("demo-quick.mp4", 540, 960)]
-    for name, w, h in jobs:
+        jobs = [("demo-quick.mp4", 540, 960, args.theme)]
+    for name, w, h, look in jobs:
         out = os.path.join(media_dir, name)
         print("rendering", out)
-        render.render(midi, out, width=w, height=h, title="Prelude in C  ·  J.S. Bach",
-                      audio=wav, theme_name=args.theme, crf=21, on_progress=render._cli_progress)
+        title = "Prelude in C" if look == "paper" else "Prelude in C  ·  J.S. Bach"
+        render.render(midi, out, width=w, height=h, title=title,
+                      audio=wav, theme_name=look, crf=21, on_progress=render._cli_progress)
     if not args.quick:
-        make_webp(os.path.join(media_dir, "demo-landscape.mp4"), os.path.join(media_dir, "demo.webp"))
+        if not args.paper:
+            make_webp(os.path.join(media_dir, "demo-landscape.mp4"), os.path.join(media_dir, "demo.webp"))
+        make_webp(os.path.join(media_dir, "demo-paper.mp4"), os.path.join(media_dir, "demo-paper.webp"),
+                  start=4.0, seconds=8.0, width=360)
     print("done")
 
 

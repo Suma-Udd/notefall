@@ -68,6 +68,8 @@ def build_parser():
     p.add_argument("--synth", action="store_true", help=argparse.SUPPRESS)  # old flag, now default
     p.add_argument("--soundfont", help="a .sf2 piano for the sound (needs FluidSynth installed)")
     p.add_argument("--no-sparks", action="store_true", help="turn off the little sparks")
+    p.add_argument("--no-hands", action="store_true",
+                   help="hide the animated hands in the paper look")
     p.add_argument("--no-bar-lines", action="store_true", help="hide the faint bar lines")
     p.add_argument("--no-progress", action="store_true", help="hide the bottom progress bar")
     p.add_argument("--workers", type=int, help="how many CPU cores to draw with")
@@ -153,6 +155,7 @@ def run(args, log=print, on_progress=None, cancel=None):
         lead_in=args.lead_in,
         bar_lines=bar_lines,
         particles=not args.no_sparks,
+        hands=not args.no_hands,
         split=split,
         sustain=args.sustain,
         workers=args.workers,

@@ -384,12 +384,14 @@ class App:
         self.smooth = tk.BooleanVar(value=True)
         self.pedal_blocks = tk.BooleanVar(value=False)
         self.sparks = tk.BooleanVar(value=True)
+        self.hands = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="")
 
         self._fonts()
         self._window()
         self._build()
-        for var in (self.fmt, self.theme_key, self.pedal_blocks, self.sparks, self.title_text):
+        for var in (self.fmt, self.theme_key, self.pedal_blocks, self.sparks, self.hands,
+                    self.title_text):
             var.trace_add("write", lambda *_: self.schedule_preview())
         self.root.after(80, self._poll)
         self.root.after(PREVIEW_FPS and int(1000 / PREVIEW_FPS), self._tick)
@@ -480,7 +482,7 @@ class App:
         self.fmt.trace_add("write", lambda *_: self.fmt_hint.configure(text=FORMAT_HINT[self.fmt.get()]))
 
         # look
-        self.theme_hint = self._section(side, "Colours", self._theme_name())
+        self.theme_hint = self._section(side, "Look", self._theme_name())
         Swatches(side, self.theme_key).pack(anchor="w")
         self.theme_key.trace_add("write", lambda *_: self.theme_hint.configure(text=self._theme_name()))
 
@@ -500,7 +502,8 @@ class App:
         opts.pack(fill="x", pady=(12, 0))
         for text, var in (("Smooth motion (60 fps)", self.smooth),
                           ("Notes ring with the pedal", self.pedal_blocks),
-                          ("Sparks", self.sparks)):
+                          ("Sparks", self.sparks),
+                          ("Hands on the keys (Paper look)", self.hands)):
             line = tk.Frame(opts, bg=CARD)
             line.pack(fill="x", pady=2)
             self._label(line, text).pack(side="left")
@@ -623,7 +626,7 @@ class App:
         w, h = self._preview_box()
         opts = dict(width=w, height=h, theme_name=self.theme_key.get(),
                     title=self.title_text.get() or None, particles=self.sparks.get(),
-                    sustain="pedal" if self.pedal_blocks.get() else "keys")
+                    hands=self.hands.get(), sustain="pedal" if self.pedal_blocks.get() else "keys")
 
         def work():
             try:
@@ -748,7 +751,8 @@ class App:
         fmt, sound, own, is_midi = self.fmt.get(), self.sound.get(), self.own_audio, self._is_midi(path)
         opts = dict(theme_name=self.theme_key.get(), title=self.title_text.get() or None,
                     sustain="pedal" if self.pedal_blocks.get() else "keys",
-                    particles=self.sparks.get(), fps=60 if self.smooth.get() else 30)
+                    particles=self.sparks.get(), hands=self.hands.get(),
+                    fps=60 if self.smooth.get() else 30)
 
         def work():
             try:
