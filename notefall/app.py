@@ -505,6 +505,48 @@ class ScrollArea(tk.Frame):
         self.canvas.yview_scroll(step, "units")
 
 
+class Pill(Canvas):
+    """A small tinted pill button whose text can change (used for updates)."""
+
+    def __init__(self, parent, text, command, font, bg=None):
+        self.bg = bg or P["side"]
+        self.font = font
+        self.h = px(28)
+        super().__init__(parent, px(60), self.h, bg=self.bg, cursor="hand2")
+        self.command = command
+        self.img = self.create_image(0, 0, anchor="nw")
+        self.label = self.create_text(0, self.h / 2, anchor="center", font=font)
+        self.hover = False
+        self.solid = False
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+        self.bind("<ButtonRelease-1>", lambda e: self.command and self.command())
+        self.set(text)
+
+    def _hover(self, on):
+        self.hover = on
+        self._paint()
+
+    def set(self, text, solid=False, clickable=True):
+        self.text, self.solid, self.clickable = text, solid, clickable
+        self.configure(cursor="hand2" if clickable else "arrow")
+        self._paint()
+
+    def _paint(self):
+        w = tkfont.Font(font=self.font).measure(self.text) + px(28)
+        self.configure(width=w)
+        if self.solid:
+            fill = P["accent_hover"] if self.hover and self.clickable else P["accent"]
+            ink = "#FFFFFF"
+        else:
+            fill = P["line"] if self.hover and self.clickable else P["track"]
+            ink = P["accent"] if self.clickable else P["sub"]
+        self.itemconfigure(self.img, image=self.keep(
+            "bg", rounded(w, self.h, self.h // 2, fill, bg=self.bg)))
+        self.coords(self.label, w / 2, self.h / 2)
+        self.itemconfigure(self.label, text=self.text, fill=ink)
+
+
 class IconButton(Canvas):
     """A small round button with a drawn glyph (sun or moon)."""
 
@@ -563,6 +605,7 @@ class App:
         self.frame_i = 0
         self.result = None
         self.update_info = None
+        self._updating = False
         self._busy_text = ""
         self._stage_msg = None
 
@@ -725,14 +768,9 @@ class App:
         self._label(line1, "NoteFall", self.f_title, bg=P["side"]).pack(side="left")
         self._label(line1, __version__, self.f_small, fg=P["faint"], bg=P["side"]).pack(
             side="left", padx=(px(6), 0), pady=(px(4), 0))
-        self.update_link = self._label(names, "", self.f_small, fg=P["accent"], bg=P["side"],
-                                       cursor="hand2")
-        self.update_link.bind("<Button-1>", lambda e: self._update_click())
         self._label(names, "Piano music in. Falling notes out.", self.f_small, fg=P["sub"],
                     bg=P["side"]).pack(anchor="w")
         IconButton(head, "sun" if self.dark else "moon", self._toggle_appearance).pack(side="right")
-        if self.update_info:
-            self._on_update_event("update", self.update_info)
 
         # bottom: button and status (packed first so it always has room)
         bottom = tk.Frame(side, bg=P["side"])
@@ -753,6 +791,10 @@ class App:
         self.go = Button(bottom, "Create Video", self.start, width=self.CW, height=px(44),
                          font=self.f_button)
         self.go.pack()
+        self.update_pill = Pill(bottom, "Check for updates", self._update_click, self.f_small)
+        self.update_pill.pack(pady=(px(12), 0))
+        if self.update_info:
+            self._on_update_event("update", self.update_info)
         self.go.bind("<Enter>", lambda e: self.busy and self.status.set("Click to stop"), add="+")
         self.go.bind("<Leave>", lambda e: self.busy and self.status.set(self._busy_text), add="+")
         self.go.set_enabled(bool(self.input_path.get()) and not self.busy)
@@ -1100,17 +1142,36 @@ class App:
 
     # updates -------------------------------------------------------------
 
-    def _check_update(self):
+    def _check_update(self, manual=False):
         from . import update
 
-        threading.Thread(target=lambda: self.events.put(("update", update.check())),
-                         daemon=True).start()
+        if manual:
+            self.update_pill.set("Checking…", clickable=False)
+
+        def work():
+            try:
+                self.events.put(("update", update.check(manual=manual)))
+            except Exception as e:
+                self.events.put(("update_check_failed", str(e)))
+            else:
+                if manual:
+                    self.events.put(("update_checked", None))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _pill_reset(self):
+        if not self.update_info and not self._updating:
+            self.update_pill.set("Check for updates")
 
     def _update_click(self):
         from . import update
 
         info = self.update_info
-        if not info or self.busy:
+        if self.busy or self._updating:
+            return
+        if not info:
+            if self.update_pill.clickable:
+                self._check_update(manual=True)
             return
         if not (info["setup"] and update.installed_with_setup()):
             import webbrowser
@@ -1120,8 +1181,8 @@ class App:
         if not messagebox.askyesno("NoteFall", "NoteFall %s is out. Update now?\n\n"
                                    "It downloads, installs and reopens by itself." % info["version"]):
             return
-        self.update_link.configure(text="Downloading…", cursor="")
-        self.update_info = None
+        self._updating = True
+        self.update_pill.set("Downloading…", solid=True, clickable=False)
 
         def work():
             try:
@@ -1135,13 +1196,20 @@ class App:
     def _on_update_event(self, kind, value):
         if kind == "update" and value:
             self.update_info = value
-            self.update_link.configure(text="Update to %s" % value["version"])
-            self.update_link.pack(anchor="w")
+            self.update_pill.set("Update to %s" % value["version"], solid=True)
+        elif kind == "update_checked":
+            if not self.update_info:
+                self.update_pill.set("You're up to date ✓", clickable=False)
+                self.root.after(4000, self._pill_reset)
+        elif kind == "update_check_failed":
+            self.update_pill.set("Couldn't check, try again later", clickable=False)
+            self.root.after(4000, self._pill_reset)
         elif kind == "update_progress":
-            self.update_link.configure(text="Downloading %d%%" % int(value * 100))
+            self.update_pill.set("Downloading %d%%" % int(value * 100), solid=True, clickable=False)
         elif kind == "update_ready":
             from . import update
 
+            self.update_pill.set("Installing…", solid=True, clickable=False)
             try:
                 update.run_installer(value)
             except Exception as e:
@@ -1149,7 +1217,8 @@ class App:
                 return
             self.root.destroy()
         elif kind == "update_failed":
-            self.update_link.configure(text="Update failed", cursor="")
+            self._updating = False
+            self.update_pill.set("Update failed, try again", solid=True)
             messagebox.showerror("NoteFall", "Couldn't update: %s\n\nYou can grab the new version "
                                  "from the download page." % value)
 
