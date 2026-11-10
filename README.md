@@ -45,14 +45,17 @@
 
    | your computer | file |
    | --- | --- |
-   | Windows | `NoteFall-…-windows-x64.zip` |
-   | Mac with an Apple chip (M1 and newer) | `NoteFall-…-mac-arm64.zip` |
-   | Older Intel Mac | `NoteFall-…-mac-x64.zip` |
+   | Windows | `NoteFall-…-windows-x64-Setup.exe` |
+   | Mac with an Apple chip (M1 and newer) | `NoteFall-…-mac-arm64.dmg` |
+   | Older Intel Mac | `NoteFall-…-mac-x64.dmg` |
    | Linux | `NoteFall-…-linux-x64.tar.gz` |
 
-2. Unzip it and open **NoteFall**.
+2. **Windows:** open the Setup file and click **Install**. No admin password needed, and NoteFall shows up in the Start menu.
+   **Mac:** open the .dmg and drag **NoteFall** onto **Applications**.
 
-The first time, your computer might not trust it yet because it isn't from a big company. On **Windows** click **More info**, then **Run anyway**. On a **Mac** right-click the app, pick **Open**, then **Open** again. You only do this once.
+The first time, your computer might warn you because the app isn't signed by a big company (signing costs money every year). On **Windows** click **More info**, then **Run anyway**. On a **Mac** open NoteFall once, then go to **System Settings → Privacy & Security** and click **Open Anyway**. You only do this once.
+
+**Updates:** when a new version is out, NoteFall shows **Update to …** at the top. On Windows one click downloads it, installs it and reopens the app. On Mac it opens the download page.
 
 <details>
 <summary>Prefer a one line installer?</summary>

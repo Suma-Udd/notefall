@@ -1,8 +1,9 @@
 name: release
 
-# Builds the double-click apps. Push a tag like v0.2.0 to publish a release.
-# Or run it by hand from the Actions tab: leave "tag" empty to just get the
-# files as artifacts, or type a new tag like v0.2.1 to publish that release.
+# Builds the apps: a Windows installer (.exe), Mac disk images (.dmg) and a
+# Linux tar.gz. Run it from the Actions tab and type a new tag like v0.4.0 to
+# publish that release (leave it empty to only build). The version inside the
+# app is taken from the tag, and installed apps offer the update on next launch.
 on:
   push:
     tags: ["v*"]
@@ -34,6 +35,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re
+          v = os.environ["TAG"].lstrip("v")
+          assert re.fullmatch(r"\d+\.\d+\.\d+", v), "tag should look like v1.2.3, got " + v
+          for path, pat, new in (("notefall/__init__.py", r'__version__ = ".*"', '__version__ = "%s"' % v),
+                                 ("pyproject.toml", r'^version = ".*"', 'version = "%s"' % v)):
+              s = open(path).read()
+              open(path, "w").write(re.sub(pat, new, s, count=1, flags=re.M))
+          print("version", v)
+          PY
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
       - name: Install
         run: pip install pyinstaller .
       - name: Build
@@ -46,10 +67,23 @@ jobs:
           else APP=dist/NoteFall/NoteFall; fi
           "$APP" examples/prelude_in_c.mid -o smoke.mp4 --size 270x480 --fps 10
           test -s smoke.mp4
+      - name: Smoke test the installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ./dist/*-Setup.exe //VERYSILENT //SUPPRESSMSGBOXES //NORESTART
+          test -f "$LOCALAPPDATA/Programs/NoteFall/NoteFall.exe"
+          test -f "$LOCALAPPDATA/Programs/NoteFall/unins000.exe"
+      - name: Check the disk image
+        if: runner.os == 'macOS'
+        run: hdiutil verify dist/*.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: app-${{ matrix.os }}
+          if-no-files-found: error
           path: |
+            dist/*.exe
+            dist/*.dmg
             dist/*.zip
             dist/*.tar.gz
 
@@ -60,6 +94,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: sed -i -E "s/^version = \".*\"/version = \"${TAG#v}\"/" pyproject.toml && sed -i -E "s/^__version__ = \".*\"/__version__ = \"${TAG#v}\"/" notefall/__init__.py
       - run: pip install build && python -m build
       - uses: actions/upload-artifact@v4
         with:
