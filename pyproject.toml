@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "notefall"
-version = "0.4.0"
+version = "0.5.0"
 description = "Turn a MIDI file or a piano recording into a falling notes piano video. App window or one command."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,6 +30,8 @@ dependencies = [
     "onnxruntime>=1.16",
     # a working ffmpeg on every OS, used when there isn't one on PATH
     "imageio-ffmpeg>=0.4.9",
+    # certificates for the one time piano model download (frozen macOS apps have none)
+    "certifi",
 ]
 
 [project.optional-dependencies]

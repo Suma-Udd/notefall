@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Recordings are listened to with a model made only for piano (ByteDance's high resolution piano transcription) instead of Basic Pitch. It gets far more notes right, and hears the sustain pedal and how hard each key was hit. It's downloaded once (about 150 MB) the first time you use a recording, and Basic Pitch is still there as the fallback (`--engine`).
+- The hands now play along in every look, not just Paper, and the toggle is on by default.
+- The title is empty unless you type one. It used to be filled in from the file name, which put things like a TikTok id over the video.
+- A redesigned app: a calm Apple style sidebar with grouped cards, segmented controls, real switches and colour swatches, sharp on high DPI Windows screens.
+- Dark mode. It follows your system, and the button at the top switches it (and remembers).
+- The app remembers your look, hands and appearance between runs.
+
 ## 0.4.0
 
 - A new look, **Paper**: a warm sketchbook page, hand drawn note blocks with the note name on each one, a keyboard with every key labelled, and the chord that's playing (with the next one coming up).

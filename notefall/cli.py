@@ -69,17 +69,21 @@ def build_parser():
     p.add_argument("--soundfont", help="a .sf2 piano for the sound (needs FluidSynth installed)")
     p.add_argument("--no-sparks", action="store_true", help="turn off the little sparks")
     p.add_argument("--no-hands", action="store_true",
-                   help="hide the animated hands in the paper look")
+                   help="hide the animated hands on the keys")
     p.add_argument("--no-bar-lines", action="store_true", help="hide the faint bar lines")
     p.add_argument("--no-progress", action="store_true", help="hide the bottom progress bar")
     p.add_argument("--workers", type=int, help="how many CPU cores to draw with")
     p.add_argument("--keep-midi", help="save the MIDI heard in a recording to this file")
     g = p.add_argument_group("listening to recordings (only used when the input isn't MIDI)")
-    g.add_argument("--onset-threshold", type=float, default=0.65,
-                   help="higher = fewer ghost notes, lower = catch soft notes (default 0.65)")
-    g.add_argument("--frame-threshold", type=float, default=0.3)
-    g.add_argument("--min-note-ms", type=float, default=58.0,
-                   help="ignore notes shorter than this (default 58)")
+    g.add_argument("--engine", choices=("auto", "piano", "basic"), default="auto",
+                   help="piano = the piano-only model (best for piano, one time download), "
+                        "basic = Basic Pitch (small, any instrument). auto tries piano first")
+    g.add_argument("--onset-threshold", type=float, default=None,
+                   help="higher = fewer ghost notes, lower = catch soft notes "
+                        "(default 0.3 piano, 0.65 basic)")
+    g.add_argument("--frame-threshold", type=float, default=None)
+    g.add_argument("--min-note-ms", type=float, default=None,
+                   help="ignore notes shorter than this (default 58 for basic)")
     g.add_argument("--min-hz", type=float, default=None)
     g.add_argument("--max-hz", type=float, default=None)
     p.add_argument("--version", action="version", version="notefall " + __version__)
@@ -123,6 +127,8 @@ def run(args, log=print, on_progress=None, cancel=None):
         midi_path = transcribe(
             args.input,
             midi_out=args.keep_midi,
+            engine=args.engine,
+            on_status=log,
             onset_threshold=args.onset_threshold,
             frame_threshold=args.frame_threshold,
             minimum_note_length=args.min_note_ms,
