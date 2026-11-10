@@ -45,15 +45,18 @@ def main():
 
     model = Note_pedal(frames_per_second=100, classes_num=88)
     model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=False)["model"])
-    model.eval()
+    # export puts the top module back in the mode it found it in, so the wrapper
+    # has to start in eval too or the model comes back out with dropout on
+    wrap = Wrap(model).eval()
 
     path = os.path.join(out_dir, "piano-transcription.onnx")
     # batch of one: the GRUs bake their starting state's shape in at export time
     dummy = torch.randn(1, SEGMENT) * 0.05
-    torch.onnx.export(Wrap(model), dummy, path, input_names=["audio"], output_names=OUTPUTS,
+    torch.onnx.export(wrap, dummy, path, input_names=["audio"], output_names=OUTPUTS,
                       opset_version=17, do_constant_folding=True, dynamo=False)
     print("exported", path, os.path.getsize(path) // 1_000_000, "MB")
 
+    wrap.eval()
     import onnxruntime as ort
 
     info = {"outputs": OUTPUTS, "segment_samples": SEGMENT, "sample_rate": 16000}
@@ -69,7 +72,7 @@ def main():
         diffs = {k: 0.0 for k in OUTPUTS}
         for i in range(3):
             with torch.no_grad():
-                ref = Wrap(model)(torch.from_numpy(seg[i:i + 1]))
+                ref = wrap(torch.from_numpy(seg[i:i + 1]))
             got = sess.run(None, {"audio": seg[i:i + 1]})
             for k, r, g in zip(OUTPUTS, ref, got):
                 diffs[k] = max(diffs[k], float(np.abs(r.numpy() - g).max()))
