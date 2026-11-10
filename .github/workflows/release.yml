@@ -1,11 +1,17 @@
 name: release
 
-# Builds the double-click apps. Push a tag like v0.2.0 to publish a release,
-# or run it by hand from the Actions tab to just get the files as artifacts.
+# Builds the double-click apps. Push a tag like v0.2.0 to publish a release.
+# Or run it by hand from the Actions tab: leave "tag" empty to just get the
+# files as artifacts, or type a new tag like v0.2.1 to publish that release.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (like v0.2.1). Empty = build only."
+        required: false
+        default: ""
   # build (but don't publish) on PRs that touch packaging, so it never rots
   pull_request:
     paths:
@@ -61,7 +67,7 @@ jobs:
           path: dist/*
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     needs: [app, python-package]
     runs-on: ubuntu-latest
     steps:
@@ -72,4 +78,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: NoteFall ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
