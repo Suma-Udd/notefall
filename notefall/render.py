@@ -1,108 +1,490 @@
-"""Frame rendering and encoding."""
+"""Frame rendering and encoding.
+
+Frames are drawn with Pillow and piped as raw rgb24 straight into x264, so
+there's no PNG per frame and no temp clutter. Glow is drawn on a quarter
+size layer, blurred, scaled back up and screen-blended on top, which looks
+expensive but costs a few milliseconds per frame.
+"""
 
 import math
+import multiprocessing
 import os
-import shutil
 import subprocess
-import tempfile
+import sys
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 import pretty_midi
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
-from . import keyboard, theme
+from . import keyboard, media, theme
 
-FONT_DIRS = [
-    "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/TTF",
-    "/Library/Fonts",
-    "/System/Library/Fonts/Supplemental",
+FORMATS = {
+    "phone": (1080, 1920),
+    "youtube": (1920, 1080),
+    "square": (1080, 1080),
+}
+
+FONT_FILES = [
+    # Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    # macOS
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    # Windows
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "segoeuib.ttf"),
+    os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arialbd.ttf"),
 ]
 
-
-def ffmpeg_bin():
-    found = shutil.which("ffmpeg")
-    if found:
-        return found
-    for cand in (
-        os.path.expanduser("~/.hermes/tools/ffmpeg-9.0.1-linux-x64/bin/ffmpeg"),
-        "/usr/local/bin/ffmpeg",
-    ):
-        if os.path.exists(cand):
-            return cand
-    raise SystemExit("ffmpeg not found on PATH. Install it first: apt install ffmpeg")
+GLOW_SCALE = 4
+LEAD_FRACTION = 0.75
+TAIL = 1.6
+MIN_KEY_PX = 80
+FADE_IN = 0.4
+FADE_OUT = 1.0
 
 
-def ffprobe_bin():
-    found = shutil.which("ffprobe")
-    if found:
-        return found
-    guess = os.path.join(os.path.dirname(ffmpeg_bin()), "ffprobe")
-    return guess if os.path.exists(guess) else found
-
-
-def audio_duration(path):
-    probe = ffprobe_bin()
-    if not probe:
-        return 0.0
-    out = subprocess.run(
-        [probe, "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=nw=1:nk=1", path],
-        capture_output=True, text=True,
-    ).stdout.strip()
+def load_font(size):
+    """A bold sans font at `size` px, falling back to Pillow's own."""
+    size = max(8, int(size))
+    for fp in FONT_FILES:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, size)
+            except OSError:
+                continue
     try:
-        return float(out)
-    except ValueError:
-        return 0.0
+        return ImageFont.load_default(size=size)  # Pillow >= 10.1
+    except TypeError:  # pragma: no cover
+        return ImageFont.load_default()
 
 
-def load_font(size, index=0):
-    """Pick a bold sans font, fall back to PIL's bitmap font."""
-    names = ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "Arial Bold.ttf", "Arial.ttf"]
-    for d in FONT_DIRS:
-        if not os.path.isdir(d):
-            continue
-        for name in names:
-            for fp in (os.path.join(d, name), os.path.join(d, name.replace(" ", ""))):
-                if os.path.exists(fp):
-                    try:
-                        return ImageFont.truetype(fp, size)
-                    except OSError:
-                        continue
-    return ImageFont.load_default()
-
-
-def _gradient(width, height, top, bottom):
-    ramp = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
+def _vgradient(width, height, top, bottom):
+    ramp = np.linspace(0.0, 1.0, max(1, height), dtype=np.float32)[:, None]
     top_a = np.array(top, dtype=np.float32)
     bot_a = np.array(bottom, dtype=np.float32)
     rows = top_a + (bot_a - top_a) * ramp
-    img = np.repeat(rows[:, None, :], width, axis=1).astype(np.uint8)
-    return Image.fromarray(img)
+    img = np.repeat(rows[:, None, :], max(1, width), axis=1)
+    return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
 
 
-def collect_notes(pm):
+def _mix(a, b, f):
+    return tuple(int(round(x + (y - x) * f)) for x, y in zip(a, b))
+
+
+def _scale(c, f):
+    return tuple(int(min(255, max(0, x * f))) for x in c)
+
+
+def _rrect(draw, box, radius, **kw):
+    x0, y0, x1, y1 = box
+    r = max(0, min(radius, (x1 - x0) / 2 - 0.5, (y1 - y0) / 2 - 0.5))
+    if r < 1:
+        draw.rectangle(box, **kw)
+    else:
+        draw.rounded_rectangle(box, radius=r, **kw)
+
+
+def collect_notes(pm, split=None, sustain="keys"):
     """Return [(start, end, pitch, velocity, is_right_hand)] sorted by start.
 
-    Hand is decided per instrument when the MIDI has two tracks, which is how
-    piano MIDIs are normally written. A pitch threshold is only the fallback
-    because a low melody note on the right hand would otherwise turn blue.
+    Hand is decided per track when the MIDI has a left and a right hand
+    track, which is how piano MIDIs are normally written. A pitch split is
+    only the fallback because a low melody note on the right hand would
+    otherwise turn blue. `split` forces a pitch split at that MIDI note.
+
+    `sustain="keys"` draws each block as long as the key was held, which is
+    what you copy when learning a piece. `sustain="pedal"` stretches blocks
+    to when the sustain pedal lifts, which is how long the note rings.
     """
-    by_instrument = keyboard.split_by_instrument(pm.instruments)
+    by_instrument = None if split is not None else keyboard.split_by_instrument(pm.instruments)
     notes = []
     for ins in pm.instruments:
         if ins.is_drum:
             continue
         hand = by_instrument.get(id(ins)) if by_instrument else None
         for n in ins.notes:
-            if n.end - n.start < 0.01:
+            if n.end - n.start < 0.01 or not (keyboard.A0 <= n.pitch <= keyboard.C8):
                 continue
-            notes.append((n.start, n.end, n.pitch, n.velocity, hand))
-    notes.sort(key=lambda x: x[0])
+            notes.append((float(n.start), float(n.end), int(n.pitch), int(n.velocity), hand))
+    notes.sort(key=lambda x: (x[0], x[2]))
+    if sustain == "pedal":
+        pedal = keyboard.pedal_intervals(pm.instruments)
+        if pedal:
+            next_start = {}
+            stretched = []
+            for (s, e, p, v, h) in reversed(notes):
+                e2 = keyboard.sustained_end(e, pedal)
+                # a re-struck key cuts the ringing note off
+                if p in next_start:
+                    e2 = min(e2, next_start[p] - 0.01)
+                stretched.append((s, max(e, e2), p, v, h))
+                next_start[p] = s
+            notes = stretched[::-1]
     if by_instrument is None:
-        cut = keyboard.percentile_split(notes)
-        notes = [(s, e, p, v, p > cut) for (s, e, p, v, _) in notes]
+        cut = split if split is not None else keyboard.percentile_split(notes)
+        notes = [(s, e, p, v, p >= cut if split is not None else p > cut)
+                 for (s, e, p, v, _) in notes]
     return notes
+
+
+def default_lookahead(fall_height):
+    """Seconds of music visible above the keys, so blocks fall at a comfy speed."""
+    return float(min(5.0, max(2.2, fall_height / 380.0)))
+
+
+class _Particles:
+    """Deterministic sparks, so the same MIDI always renders the same video."""
+
+    BURST = 7
+    EMBER_EVERY = 0.085
+    TABLE = 32
+
+    def __init__(self, n_notes, ww, seed=7):
+        rng = np.random.default_rng(seed)
+        self.ww = ww
+        self.burst = rng.random((n_notes, self.BURST, 5))
+        self.embers = rng.random((self.TABLE, 5))
+        self.g = ww * 11.0
+
+    def _one(self, r, age, cx, base_y, power, life_scale):
+        life = (0.45 + 0.5 * r[2]) * life_scale
+        if age < 0 or age >= life:
+            return None
+        vx = (r[0] - 0.5) * self.ww * 3.2
+        vy = (0.55 + 0.9 * r[1]) * self.ww * 6.5 * power
+        x = cx + vx * age
+        y = base_y - (vy * age - 0.5 * self.g * age * age)
+        fade = 1.0 - age / life
+        size = self.ww * (0.05 + 0.07 * r[3]) * (0.4 + 0.6 * fade)
+        return x, y, size, fade
+
+    def sparks(self, idx, t, start, end, cx, kb_top, vel):
+        power = 0.65 + 0.5 * vel / 127.0
+        for r in self.burst[idx]:
+            p = self._one(r, t - start, cx, kb_top, power, 1.0)
+            if p:
+                yield p
+        held = min(t, end) - start
+        if held <= 0:
+            return
+        k_last = int(held / self.EMBER_EVERY)
+        for k in range(max(0, k_last - 6), k_last + 1):
+            r = self.embers[(idx * 7 + k) % self.TABLE]
+            spawn = start + k * self.EMBER_EVERY
+            p = self._one(r, t - spawn, cx + (r[4] - 0.5) * self.ww * 0.5, kb_top, 0.45, 0.6)
+            if p:
+                yield p
+
+
+class Renderer:
+    """Holds everything that stays the same between frames."""
+
+    def __init__(self, notes, width, height, fps, lookahead, pal, title, progress,
+                 downbeats, particles, duration, pedal=()):
+        self.notes = notes
+        self.pedal = list(pedal)
+        self.W, self.H = width, height
+        self.fps = fps
+        self.pal = pal
+        self.title = title
+        self.progress = progress
+        self.duration = duration
+        self.downbeats = downbeats
+
+        self.starts = np.array([n[0] for n in notes])
+        self.ends = np.array([n[1] for n in notes])
+
+        lo, hi = keyboard.snap_range([n[2] for n in notes],
+                                     min_white=max(15, int(width / MIN_KEY_PX)))
+        margin = int(width * 0.012)
+        self.geo, self.ww, self.whites = keyboard.build_keys(margin, width - margin, lo, hi)
+        ww = self.ww
+
+        self.bar_h = max(4, int(height * 0.0035)) if progress else 0
+        self.kb_h = int(min(height * 0.2, max(height * 0.1, ww * 4.4)))
+        self.kb_top = height - self.kb_h
+        self.lookahead = lookahead or default_lookahead(self.kb_top)
+        self.pps = self.kb_top / self.lookahead
+
+        self.felt_h = max(3, int(self.kb_h * 0.045))
+        self.white_h = self.kb_h - self.felt_h - self.bar_h - max(2, int(self.kb_h * 0.02))
+        self.black_h = int(self.white_h * 0.63)
+        self.radius = max(2, int(ww * 0.16))
+        self.pad = ww * 0.09
+        self.outline_w = max(1, int(round(ww * 0.035)))
+
+        self.particles = _Particles(len(notes), ww) if particles else None
+        self.f_title = load_font(min(width, height) * 0.045)
+        self.f_key = load_font(min(ww * 0.34, self.kb_h * 0.1))
+        self.f_pedal = load_font(min(width, height) * 0.022)
+
+        self._lit_cache = {}
+        self._build_static()
+
+    # static layers -------------------------------------------------------
+
+    def shift(self, lead_in, downbeats, duration):
+        """Move every note later by `lead_in` seconds."""
+        self.pedal = [(a + lead_in, b + lead_in) for a, b in self.pedal]
+        self.notes = [(s + lead_in, e + lead_in, p, v, rh) for (s, e, p, v, rh) in self.notes]
+        self.starts = self.starts + lead_in
+        self.ends = self.ends + lead_in
+        self.downbeats = downbeats
+        self.duration = duration
+
+    def _build_static(self):
+        W, H, pal = self.W, self.H, self.pal
+        bg = _vgradient(W, H, pal["bg_top"], pal["bg_bottom"])
+        d = ImageDraw.Draw(bg, "RGBA")
+        lane = pal["lane"]
+        for pitch in self.whites:
+            if pitch % 12 in (0, 5):
+                x0 = int(self.geo[pitch][0])
+                alpha = 16 if pitch % 12 == 0 else 8
+                d.line([x0, 0, x0, self.kb_top], fill=lane + (alpha,), width=1)
+        # soft light pooling just above the keys
+        pool = _vgradient(1, int(H * 0.12), (0, 0, 0), _scale(pal["accent"], 0.10))
+        pool = pool.resize((W, pool.height))
+        bg.paste(ImageChops.add(bg.crop((0, self.kb_top - pool.height, W, self.kb_top)), pool),
+                 (0, self.kb_top - pool.height))
+        self.background = bg
+
+        self.kb_base = self._draw_keyboard()
+        self.black_layer = self._draw_black_keys()
+
+    def _white_box(self, pitch):
+        x0, x1, _ = self.geo[pitch]
+        gap = max(1, int(round(self.ww * 0.03)))
+        return int(round(x0)) + gap // 2 + 1, self.felt_h, int(round(x1)) - (gap - gap // 2), \
+            self.felt_h + self.white_h
+
+    def _draw_keyboard(self):
+        W, pal = self.W, self.pal
+        kb = Image.new("RGB", (W, self.kb_h), pal["panel"])
+        white = _vgradient(1, self.white_h, pal["white"], pal["white_bottom"])
+        for pitch in self.whites:
+            x0, y0, x1, y1 = self._white_box(pitch)
+            kb.paste(white.resize((max(1, x1 - x0), self.white_h)), (x0, y0))
+        d = ImageDraw.Draw(kb, "RGBA")
+        for pitch in self.whites:
+            x0, y0, x1, y1 = self._white_box(pitch)
+            d.rectangle([x0, y1 - max(2, int(self.white_h * 0.025)), x1, y1],
+                        fill=_scale(pal["white_bottom"], 0.82))
+        # shadow under the felt
+        sh = max(3, int(self.kb_h * 0.05))
+        for i in range(sh):
+            d.line([0, self.felt_h + i, W, self.felt_h + i],
+                   fill=(0, 0, 0, int(110 * (1 - i / sh) ** 2)))
+        self._draw_labels(d, None)
+        d.rectangle([0, 0, W, self.felt_h], fill=pal["felt"])
+        d.line([0, self.felt_h - 1, W, self.felt_h - 1], fill=_scale(pal["felt"], 0.6))
+        return kb
+
+    def _draw_labels(self, d, only):
+        for pitch in self.whites:
+            if pitch % 12 != 0 or (only is not None and pitch not in only):
+                continue
+            x0, y0, x1, y1 = self._white_box(pitch)
+            label = "C%d" % (pitch // 12 - 1)
+            tw = d.textlength(label, font=self.f_key)
+            if tw > (x1 - x0) * 0.92:
+                continue
+            fill = self.pal["key_label"] if only is None else (40, 44, 56)
+            d.text((x0 + (x1 - x0 - tw) / 2, y1 - self.f_key.size * 1.45), label,
+                   font=self.f_key, fill=fill)
+
+    def _black_box(self, x0, x1):
+        return int(round(x0)), self.felt_h, int(round(x1)), self.felt_h + self.black_h
+
+    def _draw_black_keys(self):
+        layer = Image.new("RGBA", (self.W, self.kb_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(layer)
+        pal = self.pal
+        for pitch, (x0, x1, is_black) in self.geo.items():
+            if not is_black:
+                continue
+            bx0, by0, bx1, by1 = self._black_box(x0, x1)
+            d.rectangle([bx0 - 1, by0, bx1 + 1, by1 + 2], fill=(0, 0, 0, 140))
+            d.rectangle([bx0, by0, bx1, by1], fill=pal["black"] + (255,))
+            inset = max(1, int((bx1 - bx0) * 0.14))
+            face = _vgradient(max(1, bx1 - bx0 - 2 * inset), max(1, int(self.black_h * 0.86)),
+                              pal["black_top"], pal["black"]).convert("RGBA")
+            layer.paste(face, (bx0 + inset, by0))
+        return layer
+
+    def _draw_pedal(self, d, t):
+        """A small 'Sustain' pill above the right end of the keys, lit while the pedal is down."""
+        down = any(a <= t < b for a, b in self.pedal)
+        f = self.f_pedal
+        label = "Sustain"
+        tw = d.textlength(label, font=f)
+        h = f.size * 1.7
+        x1 = self.W - self.W * 0.03
+        x0 = x1 - tw - h
+        y1 = self.kb_top - h * 0.6
+        y0 = y1 - h
+        accent = self.pal["accent"]
+        if down:
+            d.rounded_rectangle([x0, y0, x1, y1], radius=h / 2, fill=accent + (210,))
+            fill = (16, 18, 26)
+        else:
+            d.rounded_rectangle([x0, y0, x1, y1], radius=h / 2, outline=accent + (90,),
+                                width=max(1, int(h / 14)))
+            fill = accent + (110,)
+        d.text((x0 + h / 2, y0 + (h - f.size) / 2 - f.size * 0.08), label, font=f, fill=fill)
+
+    def _lit(self, right, w, h, black):
+        key = (right, w, h, black)
+        img = self._lit_cache.get(key)
+        if img is None:
+            pal = self.pal
+            col = pal["right"] if right else pal["left"]
+            hi = pal["right_hi"] if right else pal["left_hi"]
+            if black:
+                img = _vgradient(1, h, _scale(col, 0.95), _scale(col, 0.55))
+            else:
+                img = _vgradient(1, h, hi, col)
+            img = img.resize((max(1, w), h))
+            self._lit_cache[key] = img
+        return img
+
+    # per frame ------------------------------------------------------------
+
+    def frame(self, t):
+        W, H, pal = self.W, self.H, self.pal
+        kb_top, pps, ww = self.kb_top, self.pps, self.ww
+        img = self.background.copy()
+        d = ImageDraw.Draw(img, "RGBA")
+        gs = GLOW_SCALE
+        glow = Image.new("RGB", (W // gs + 1, H // gs + 1), (0, 0, 0))
+        g = ImageDraw.Draw(glow)
+
+        for b in self.downbeats:
+            y = kb_top - (b - t) * pps
+            if 0 <= y < kb_top:
+                d.line([0, y, W, y], fill=pal["lane"] + (14,), width=1)
+
+        visible = np.nonzero((self.starts <= t + self.lookahead) & (self.ends >= t - 0.02))[0]
+        active = {}
+        # white key notes first, black key notes on top
+        order = sorted(visible, key=lambda i: self.geo[self.notes[i][2]][2])
+        for i in order:
+            start, end, pitch, vel, right = self.notes[i]
+            x0, x1, is_black = self.geo[pitch]
+            bottom = kb_top - (start - t) * pps
+            top = bottom - max(ww * 0.25, (end - start) * pps)
+            pad = self.pad * (0.6 if is_black else 1.0)
+            bx0, bx1 = x0 + pad, x1 - pad
+            by0, by1 = max(-40.0, top), min(float(kb_top), bottom)
+            if by1 - by0 < 2:
+                continue
+
+            col = pal["right"] if right else pal["left"]
+            hi = pal["right_hi"] if right else pal["left_hi"]
+            if is_black:
+                col, hi = _scale(col, 0.78), _scale(hi, 0.85)
+            strength = 0.8 + 0.2 * (vel / 127.0)
+            playing = start <= t <= end
+            body = _mix(_scale(col, strength), hi, 0.35) if playing else _scale(col, strength)
+
+            _rrect(d, [bx0, by0, bx1, by1], self.radius, fill=body + (255,),
+                   outline=hi + (230 if playing else 170,), width=self.outline_w)
+            g.rectangle([bx0 / gs, by0 / gs, bx1 / gs, by1 / gs],
+                        fill=_scale(col, 0.75 if playing else 0.22))
+            if playing:
+                active[pitch] = right
+                cx = (x0 + x1) / 2
+                rx, ry = ww * 1.0, ww * 0.55
+                g.ellipse([(cx - rx) / gs, (kb_top - ry) / gs, (cx + rx) / gs, (kb_top + ry) / gs],
+                          fill=hi)
+
+            if self.particles and t - start < 1.0:
+                cx = (x0 + x1) / 2
+                spark = _mix(hi, (255, 255, 255), 0.4)
+                for (px, py, size, fade) in self.particles.sparks(i, t, start, end, cx, kb_top, vel):
+                    if py > kb_top or py < 0:
+                        continue
+                    d.ellipse([px - size, py - size, px + size, py + size],
+                              fill=spark + (int(255 * fade),))
+                    gsz = size * 2.2
+                    g.ellipse([(px - gsz) / gs, (py - gsz) / gs, (px + gsz) / gs, (py + gsz) / gs],
+                              fill=_scale(hi, fade))
+
+        # keyboard
+        kb = self.kb_base.copy()
+        kd = ImageDraw.Draw(kb)
+        lit_c = []
+        for pitch, right in active.items():
+            x0, x1, is_black = self.geo[pitch]
+            if is_black:
+                continue
+            bx0, by0, bx1, by1 = self._white_box(pitch)
+            kb.paste(self._lit(right, bx1 - bx0, by1 - by0, False), (bx0, by0))
+            g.rectangle([bx0 / gs, (kb_top + by0) / gs, bx1 / gs, (kb_top + by0 + self.white_h * 0.5) / gs],
+                        fill=_scale(pal["right"] if right else pal["left"], 0.5))
+            if pitch % 12 == 0:
+                lit_c.append(pitch)
+        if lit_c:
+            self._draw_labels(kd, set(lit_c))
+        kb.paste(self.black_layer, (0, 0), self.black_layer)
+        for pitch, right in active.items():
+            x0, x1, is_black = self.geo[pitch]
+            if not is_black:
+                continue
+            bx0, by0, bx1, by1 = self._black_box(x0, x1)
+            kb.paste(self._lit(right, bx1 - bx0, by1 - by0, True), (bx0, by0))
+            g.rectangle([bx0 / gs, (kb_top + by0) / gs, bx1 / gs, (kb_top + by1) / gs],
+                        fill=_scale(pal["right"] if right else pal["left"], 0.6))
+        img.paste(kb, (0, kb_top))
+
+        # the line notes land on
+        d.line([0, kb_top, W, kb_top], fill=_mix(pal["accent"], (255, 255, 255), 0.3) + (200,), width=2)
+        g.line([0, kb_top / gs, W / gs, kb_top / gs], fill=_scale(pal["accent"], 0.35),
+               width=max(1, int(ww / gs * 0.12)))
+
+        blur = max(2.0, ww / gs * 0.45)
+        glow = glow.filter(ImageFilter.GaussianBlur(blur)).resize((W, H), Image.BILINEAR)
+        img = ImageChops.screen(img, glow.crop((0, 0, W, H)))
+        d = ImageDraw.Draw(img, "RGBA")
+
+        if self.pedal:
+            self._draw_pedal(d, t)
+
+        if self.title:
+            tx, ty = int(min(W, H) * 0.055), int(min(W, H) * 0.05)
+            sh = max(2, self.f_title.size // 16)
+            d.text((tx + sh, ty + sh), self.title, font=self.f_title, fill=(0, 0, 0, 160))
+            d.text((tx, ty), self.title, font=self.f_title, fill=pal["text"])
+
+        if self.progress:
+            d.rectangle([0, H - self.bar_h, W, H], fill=pal["track"])
+            d.rectangle([0, H - self.bar_h, int(W * min(1.0, t / self.duration)), H],
+                        fill=pal["right"])
+
+        fade = min(1.0, t / FADE_IN, (self.duration - t) / FADE_OUT)
+        if fade < 1.0:
+            arr = np.asarray(img, dtype=np.float32) * max(0.0, fade)
+            img = Image.fromarray(arr.astype(np.uint8))
+        return img
+
+
+_WORKER = None
+
+
+def _worker_init(renderer):
+    global _WORKER
+    _WORKER = renderer
+
+
+def _worker_frame(t):
+    return _WORKER.frame(t).tobytes()
+
+
+def default_workers():
+    return max(1, min(8, (os.cpu_count() or 2) - 1))
 
 
 def render(
@@ -111,175 +493,162 @@ def render(
     width=1080,
     height=1920,
     fps=30,
-    lookahead=4.0,
+    lookahead=None,
     theme_name=theme.DEFAULT_THEME,
     title=None,
     audio=None,
     progress=True,
+    lead_in=None,
+    bar_lines=True,
+    particles=True,
+    split=None,
+    sustain="keys",
+    on_progress=None,
+    cancel=None,
+    crf=18,
+    workers=None,
 ):
-    """Render `midi` (path or PrettyMIDI) to `out` as an mp4."""
-    pm = pretty_midi.PrettyMIDI(midi) if isinstance(midi, (str, bytes, os.PathLike)) else midi
+    """Render `midi` (path or PrettyMIDI) to `out` as an mp4.
+
+    `on_progress(fraction)` is called as frames are written. `cancel` is
+    anything with an `is_set()` method, checked every frame. Frames are drawn
+    on `workers` processes (default: CPU count minus one, at most 8).
+    """
+    if isinstance(midi, (str, bytes, os.PathLike)):
+        try:
+            pm = pretty_midi.PrettyMIDI(os.fspath(midi))
+        except Exception as exc:
+            raise media.NotefallError("couldn't read that MIDI file (%s)" % exc)
+    else:
+        pm = midi
     pal = theme.get(theme_name)
-    notes = collect_notes(pm)
+    if sustain not in ("keys", "pedal"):
+        raise media.NotefallError("sustain must be 'keys' or 'pedal'")
+    notes = collect_notes(pm, split=split, sustain=sustain)
+    pedal = keyboard.pedal_intervals(pm.instruments)
     if not notes:
-        raise SystemExit("no notes found in that MIDI")
+        raise media.NotefallError("no piano notes found in that MIDI")
 
-    lo, hi = keyboard.snap_range([n[2] for n in notes])
+    # yuv420p needs even dimensions
+    width, height = max(64, int(width) // 2 * 2), max(64, int(height) // 2 * 2)
 
+    first = notes[0][0]
     note_end = max(n[1] for n in notes)
-    duration = note_end + 0.9
-    if audio:
-        duration = max(duration, audio_duration(audio) + 0.25)
 
-    kb_h = int(height * 0.14)
-    kb_top = height - kb_h
-    kb_x0, kb_x1 = int(width * 0.015), int(width * 0.985)
-    geo, ww, whites = keyboard.build_keys(width, kb_x0, kb_x1, lo, hi)
-    pps = kb_top / lookahead
-    white_h = kb_h * 0.86
-    black_h = kb_h * 0.52
+    downbeats = []
+    if bar_lines:
+        try:
+            downbeats = [float(b) for b in pm.get_downbeats()]
+        except Exception:
+            downbeats = []
 
-    base = _gradient(width, height, pal["bg_top"], pal["bg_bottom"])
-    f_title = load_font(max(14, int(height * 0.021)))
-    f_note = load_font(max(10, int(white_h * 0.30)))
-    radius = max(2, int(ww * 0.14))
-    pad = ww * 0.10
+    # probe the audio before deciding how long the video is
+    audio_len = media.duration(audio) if audio else 0.0
+
+    r = Renderer(notes, width, height, fps, lookahead, pal, title, progress, [],
+                 particles, 1.0, pedal=pedal)
+    # shift everything so the first notes fall in from the top of the screen
+    if lead_in is None:
+        lead_in = max(0.0, r.lookahead * LEAD_FRACTION - first)
+    lead_in = max(0.0, float(lead_in))
+    duration = max(note_end + lead_in + TAIL, audio_len + lead_in + 0.3)
+    r.shift(lead_in, [b + lead_in for b in downbeats if b <= note_end], duration)
 
     total = int(math.ceil(duration * fps))
-    tmpdir = tempfile.mkdtemp(prefix="notefall-")
-    raw_path = os.path.join(tmpdir, "raw.mp4")
-    encoder = subprocess.Popen(
-        [ffmpeg_bin(), "-y", "-loglevel", "error",
-         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (width, height),
-         "-r", str(fps), "-i", "-", "-an",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-         "-pix_fmt", "yuv420p", raw_path],
-        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    out = os.fspath(out)
+    part = out + ".part" + (os.path.splitext(out)[1] or ".mp4")
+    log_path = media.temp_path(".log")
 
-    try:
-        for fi in range(total):
-            t = fi / fps
-            img = base.copy()
-            d = ImageDraw.Draw(img, "RGBA")
-            d.rectangle([0, kb_top - int(height * 0.05), width, kb_top],
-                        fill=(255, 255, 255, 6))
-
-            active = {}
-            for (start, end, pitch, vel, right) in notes:
-                if pitch not in geo:
-                    continue
-                if end < t - 0.02 or start > t + lookahead:
-                    continue
-                x0, x1, _ = geo[pitch]
-                bottom = kb_top - (start - t) * pps
-                if bottom < 0:
-                    continue
-                top = bottom - max(6.0, (end - start) * pps)
-                bx0, bx1 = x0 + pad, x1 - pad
-                by0, by1 = max(-40.0, top), min(float(kb_top), bottom)
-                if by1 - by0 < 3:
-                    continue
-
-                col = pal["right"] if right else pal["left"]
-                hi_col = pal["right_hi"] if right else pal["left_hi"]
-                playing = start <= t <= end
-                # brighter for harder hits
-                strength = 0.78 + 0.22 * (vel / 127.0)
-
-                glow_alpha = (70 if playing else 26) * strength
-                d.rounded_rectangle(
-                    [bx0 - 3, by0 - 2, bx1 + 3, by1 + 3],
-                    radius=radius + 2,
-                    fill=(col[0], col[1], col[2], int(glow_alpha)),
-                )
-                body_alpha = 255 if playing else 208
-                d.rounded_rectangle(
-                    [bx0, by0, bx1, by1], radius=radius,
-                    fill=(int(col[0] * strength), int(col[1] * strength),
-                          int(col[2] * strength), body_alpha),
-                )
-                cap_h = max(3.0, (by1 - by0) * 0.10)
-                d.rounded_rectangle(
-                    [bx0, by0, bx1, by0 + cap_h], radius=max(1, radius - 2),
-                    fill=(hi_col[0], hi_col[1], hi_col[2], 240),
-                )
-                if playing:
-                    active[pitch] = right
-
-            # keyboard panel
-            d.rectangle([0, kb_top, width, height], fill=pal["panel"])
-            lip = int(kb_h * 0.10)
-            d.rectangle([0, kb_top, width, kb_top + lip], fill=pal["panel_lip"])
-            d.line([0, kb_top, width, kb_top], fill=(72, 76, 92), width=2)
-
-            for pitch in whites:
-                x0, x1, _ = geo[pitch]
-                lit = active.get(pitch)
-                if lit is True:
-                    fill = pal["right_hi"]
-                elif lit is False:
-                    fill = pal["left_hi"]
-                else:
-                    fill = pal["white"]
-                d.rectangle([x0 + 1, kb_top, x1 - 1, kb_top + white_h], fill=fill)
-                d.rectangle([x0 + 1, kb_top + white_h - 3, x1 - 1, kb_top + white_h],
-                            fill=pal["white_edge"])
-
-            for pitch, (x0, x1, is_black) in geo.items():
-                if not is_black:
-                    continue
-                lit = active.get(pitch)
-                if lit is True:
-                    fill = pal["right"]
-                elif lit is False:
-                    fill = pal["left"]
-                else:
-                    fill = pal["black"]
-                d.rectangle([x0, kb_top, x1, kb_top + black_h], fill=fill)
-
-            for pitch in whites:
-                if pitch % 12 != 0:
-                    continue
-                x0, x1, _ = geo[pitch]
-                label = "C%d" % (pitch // 12 - 1)
-                tw = d.textlength(label, font=f_note)
-                d.text((x0 + (x1 - x0 - tw) / 2,
-                        kb_top + white_h - f_note.size * 1.3),
-                       label, font=f_note, fill=pal["label"])
-
-            if title:
-                d.text((width * 0.05, height * 0.03), title, font=f_title, fill=pal["text"])
-
-            if progress:
-                d.rectangle([0, height - 5, width, height], fill=pal["track"])
-                d.rectangle([0, height - 5, int(width * min(1.0, t / duration)), height],
-                            fill=pal["right"])
-
-            encoder.stdin.write(img.tobytes())
-    except BrokenPipeError:
-        pass
-    finally:
-        try:
-            encoder.stdin.close()
-        except Exception:
-            pass
-        err = encoder.stderr.read().decode(errors="replace")
-        encoder.wait()
-
-    if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        raise SystemExit("ffmpeg failed while encoding frames:\n" + err[-1500:])
-
+    cmd = [media.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (width, height),
+           "-r", str(fps), "-i", "-"]
     if audio:
-        subprocess.run(
-            [ffmpeg_bin(), "-y", "-loglevel", "error", "-i", raw_path, "-i", audio,
-             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-             out],
-            check=True,
-        )
+        cmd += ["-i", audio, "-map", "0:v:0", "-map", "1:a:0"]
+        filters = []
+        if lead_in > 0:
+            filters.append("adelay=%d:all=1" % int(round(lead_in * 1000)))
+        filters.append("apad")
+        filters.append("afade=t=out:st=%.3f:d=%.3f" % (max(0.0, duration - FADE_OUT), FADE_OUT))
+        cmd += ["-af", ",".join(filters), "-c:a", "aac", "-b:a", "192k"]
     else:
-        shutil.copy(raw_path, out)
-    shutil.rmtree(tmpdir, ignore_errors=True)
+        cmd += ["-an"]
+    cmd += ["-c:v", "libx264", "-preset", "medium", "-tune", "animation", "-crf", str(crf),
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-t", "%.3f" % duration, part]
+
+    ok = False
+    with open(log_path, "wb") as log:
+        encoder = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                   stderr=log, **media.NO_WINDOW)
+        if workers is None:
+            workers = default_workers() if total > 90 else 1
+        pool = None
+        try:
+            times = (fi / fps for fi in range(total))
+            if workers > 1:
+                pool = multiprocessing.get_context("spawn").Pool(
+                    workers, initializer=_worker_init, initargs=(r,))
+                frames = pool.imap(_worker_frame, times, chunksize=4)
+            else:
+                frames = (r.frame(t).tobytes() for t in times)
+            for fi, data in enumerate(frames):
+                if cancel is not None and cancel.is_set():
+                    raise media.NotefallError("cancelled")
+                encoder.stdin.write(data)
+                if on_progress and (fi % 5 == 0 or fi == total - 1):
+                    on_progress((fi + 1) / total)
+            ok = True
+        except BrokenPipeError:
+            pass
+        finally:
+            if pool is not None:
+                pool.terminate()
+                pool.join()
+            try:
+                encoder.stdin.close()
+            except Exception:
+                pass
+            if not ok:
+                encoder.kill()
+            encoder.wait()
+            if not ok or encoder.returncode != 0:
+                try:
+                    os.unlink(part)
+                except OSError:
+                    pass
+
+    if not ok or encoder.returncode != 0 or not os.path.exists(part):
+        with open(log_path, "rb") as fh:
+            err = fh.read().decode(errors="replace")
+        raise media.NotefallError("ffmpeg failed while encoding:\n" + err[-1500:])
+    os.replace(part, out)
     return out
+
+
+def preview(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
+            sustain="keys", split=None, at=None):
+    """One still frame, for picking colours and sizes before a full render."""
+    pm = pretty_midi.PrettyMIDI(os.fspath(midi)) if isinstance(midi, (str, os.PathLike)) else midi
+    notes = collect_notes(pm, split=split, sustain=sustain)
+    if not notes:
+        raise media.NotefallError("no piano notes found in that MIDI")
+    width, height = max(64, int(width) // 2 * 2), max(64, int(height) // 2 * 2)
+    pedal = keyboard.pedal_intervals(pm.instruments)
+    r = Renderer(notes, width, height, 30, None, theme.get(theme_name), title, True, [],
+                 True, 1.0, pedal=pedal)
+    end = max(n[1] for n in notes)
+    r.shift(0.0, [], end + TAIL)
+    if at is None:
+        # land a little into the song, on a moment where something is playing
+        target = notes[0][0] + min(6.0, (end - notes[0][0]) * 0.3)
+        playing = [n[0] for n in notes if n[0] >= target]
+        at = (playing[0] + 0.05) if playing else target
+    return r.frame(at)
+
+
+def _cli_progress(frac):
+    width = 30
+    done = int(frac * width)
+    sys.stderr.write("\r  [%s%s] %3d%%" % ("#" * done, "." * (width - done), int(frac * 100)))
+    if frac >= 1.0:
+        sys.stderr.write("\n")
+    sys.stderr.flush()

@@ -1,60 +1,80 @@
-"""Colour palettes."""
+"""Colour palettes.
+
+Each theme only needs a handful of colours. Anything missing is filled in
+from the default theme, so adding a palette is five lines.
+"""
+
+from . import media
 
 THEMES = {
     "default": {
-        "bg_top": (8, 10, 18),
-        "bg_bottom": (16, 20, 34),
-        "panel": (10, 10, 14),
-        "panel_lip": (24, 24, 30),
-        "white": (238, 238, 242),
-        "white_shade": (206, 208, 216),
-        "white_edge": (170, 172, 182),
-        "black": (26, 26, 32),
-        "black_lit": (62, 62, 74),
-        "right": (86, 226, 168),
-        "right_hi": (156, 255, 212),
-        "left": (92, 160, 255),
-        "left_hi": (156, 204, 255),
-        "label": (150, 154, 168),
-        "text": (235, 238, 245),
-        "track": (30, 34, 48),
+        "label": "Midnight (green and blue)",
+        "bg_top": (6, 8, 16),
+        "bg_bottom": (18, 22, 38),
+        "right": (72, 222, 160),
+        "right_hi": (170, 255, 214),
+        "left": (88, 150, 255),
+        "left_hi": (170, 206, 255),
+        "accent": (120, 200, 255),
     },
     "sunset": {
-        "bg_top": (20, 8, 16),
-        "bg_bottom": (44, 16, 24),
-        "panel": (16, 9, 12),
-        "panel_lip": (38, 20, 26),
-        "white": (250, 240, 236),
-        "white_shade": (222, 205, 200),
-        "white_edge": (186, 160, 156),
-        "black": (28, 18, 22),
-        "black_lit": (74, 46, 52),
-        "right": (255, 138, 92),
-        "right_hi": (255, 205, 160),
-        "left": (232, 84, 132),
-        "left_hi": (255, 168, 196),
-        "label": (176, 150, 148),
-        "text": (255, 242, 236),
-        "track": (56, 26, 34),
+        "label": "Sunset (orange and pink)",
+        "bg_top": (18, 6, 16),
+        "bg_bottom": (46, 14, 30),
+        "right": (255, 140, 80),
+        "right_hi": (255, 214, 168),
+        "left": (236, 72, 136),
+        "left_hi": (255, 172, 204),
+        "accent": (255, 150, 120),
+        "felt": (90, 24, 40),
     },
     "ocean": {
-        "bg_top": (4, 14, 22),
-        "bg_bottom": (6, 30, 46),
-        "panel": (4, 10, 14),
-        "panel_lip": (14, 30, 40),
-        "white": (232, 244, 250),
-        "white_shade": (196, 216, 228),
-        "white_edge": (158, 182, 196),
-        "black": (14, 28, 38),
-        "black_lit": (40, 70, 88),
-        "right": (94, 234, 255),
-        "right_hi": (190, 250, 255),
-        "left": (116, 130, 255),
-        "left_hi": (180, 190, 255),
-        "label": (140, 168, 184),
-        "text": (232, 246, 252),
-        "track": (18, 44, 60),
+        "label": "Ocean (cyan and violet)",
+        "bg_top": (2, 12, 22),
+        "bg_bottom": (4, 32, 50),
+        "right": (70, 228, 255),
+        "right_hi": (196, 250, 255),
+        "left": (120, 120, 255),
+        "left_hi": (190, 190, 255),
+        "accent": (80, 220, 255),
+        "felt": (10, 46, 70),
     },
+    "neon": {
+        "label": "Neon (pink and cyan)",
+        "bg_top": (8, 2, 18),
+        "bg_bottom": (22, 6, 40),
+        "right": (255, 64, 200),
+        "right_hi": (255, 180, 236),
+        "left": (40, 230, 255),
+        "left_hi": (180, 246, 255),
+        "accent": (255, 80, 220),
+        "felt": (60, 10, 70),
+    },
+    "gold": {
+        "label": "Gold (warm and elegant)",
+        "bg_top": (10, 8, 6),
+        "bg_bottom": (28, 22, 14),
+        "right": (255, 200, 90),
+        "right_hi": (255, 236, 180),
+        "left": (210, 140, 70),
+        "left_hi": (246, 200, 150),
+        "accent": (255, 210, 120),
+        "felt": (70, 40, 16),
+    },
+}
+
+_BASE = {
+    "panel": (8, 8, 12),
+    "felt": (110, 20, 28),
+    "white": (242, 242, 246),
+    "white_bottom": (214, 216, 224),
+    "white_gap": (40, 42, 52),
+    "black": (22, 22, 28),
+    "black_top": (58, 58, 70),
+    "key_label": (140, 144, 160),
+    "lane": (255, 255, 255),
+    "text": (236, 240, 248),
+    "track": (34, 38, 54),
 }
 
 DEFAULT_THEME = "default"
@@ -62,8 +82,10 @@ DEFAULT_THEME = "default"
 
 def get(name):
     try:
-        return THEMES[name]
+        pal = dict(_BASE)
+        pal.update(THEMES[name])
+        return pal
     except KeyError:
-        raise SystemExit(
+        raise media.NotefallError(
             "unknown theme %r, pick one of: %s" % (name, ", ".join(THEMES))
         )
