@@ -1,0 +1,16 @@
+name: Idea or wish
+description: A new look, a new option, or anything that would make NoteFall better.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe it however you like. A picture or a link to a video that does it is great too.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What would you use it for?
+      placeholder: I post covers on TikTok and want...

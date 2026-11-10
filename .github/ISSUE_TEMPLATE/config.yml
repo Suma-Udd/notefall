@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Download NoteFall
+    url: https://github.com/Suma-Udd/notefall/releases/latest
+    about: The latest version for Windows, Mac and Linux.
+  - name: Read the guide
+    url: https://github.com/Suma-Udd/notefall/blob/main/docs/guide.md
+    about: MIDI files, recordings, the sustain pedal and common questions.
