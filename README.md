@@ -206,7 +206,7 @@ python scripts/build_app.py       # build the double-click app for your OS (pip 
 
 The demo is fully generated: `examples/make_demo.py` writes the MIDI itself and makes its own sound, so there are no mystery binary files.
 
-Releases: push a tag like `v0.2.0` and GitHub Actions builds the Windows, Mac and Linux apps and puts them on the [releases page](https://github.com/Suma-Udd/notefall/releases).
+Releases: push a tag like `v0.2.0` (or run the **release** workflow from the Actions tab and type a tag) and GitHub Actions builds the Windows, Mac and Linux apps and puts them on the [releases page](https://github.com/Suma-Udd/notefall/releases).
 
 ## Ideas for later
 
