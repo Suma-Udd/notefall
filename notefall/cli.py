@@ -80,10 +80,15 @@ def build_parser():
                         "basic = Basic Pitch (small, any instrument). auto tries piano first")
     g.add_argument("--onset-threshold", type=float, default=None,
                    help="higher = fewer ghost notes, lower = catch soft notes "
-                        "(default 0.3 piano, 0.65 basic)")
+                        "(default 0.4 piano, 0.65 basic)")
     g.add_argument("--frame-threshold", type=float, default=None)
     g.add_argument("--min-note-ms", type=float, default=None,
                    help="ignore notes shorter than this (default 58 for basic)")
+    g.add_argument("--note-lengths", choices=("keys", "ring"), default="keys",
+                   help="keys = as long as each key was held (default), ring = as long as "
+                        "the note sounds with the sustain pedal down")
+    g.add_argument("--no-retune", action="store_true",
+                   help="don't correct a piano that isn't tuned to 440 Hz before listening")
     g.add_argument("--min-hz", type=float, default=None)
     g.add_argument("--max-hz", type=float, default=None)
     p.add_argument("--version", action="version", version="notefall " + __version__)
@@ -132,6 +137,8 @@ def run(args, log=print, on_progress=None, cancel=None):
             onset_threshold=args.onset_threshold,
             frame_threshold=args.frame_threshold,
             minimum_note_length=args.min_note_ms,
+            lengths=args.note_lengths,
+            retune=not args.no_retune,
             minimum_frequency=args.min_hz,
             maximum_frequency=args.max_hz,
         )

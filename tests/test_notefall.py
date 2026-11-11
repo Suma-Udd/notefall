@@ -352,6 +352,47 @@ def test_piano_decode_finds_notes_and_pedal():
     assert len(pedals) == 1 and abs(pedals[0][0] - 1.0) < 0.02 and abs(pedals[0][1] - 2.0) < 0.02
 
 
+def test_pedalled_notes_are_cut_to_key_length():
+    pedal = [(0.0, 4.0)]
+    # a run in one hand under the pedal, and a bass note two octaves below it
+    notes = [(0.5, 4.0, 60, 80), (1.0, 4.0, 62, 80), (1.5, 4.0, 64, 80), (0.5, 4.0, 36, 80)]
+    cut = {n[2]: n for n in piano.key_lengths(notes, pedal)}
+    assert abs(cut[60][1] - 1.0) < 1e-6 and abs(cut[62][1] - 1.5) < 1e-6
+    assert cut[64][1] == 4.0      # nothing follows it, so it rings on
+    assert cut[36][1] == 4.0      # the other hand's notes don't end it
+    # a chord struck together stays together, and no pedal means nothing changes
+    chord = [(0.5, 3.0, 60, 80), (0.51, 3.0, 64, 80), (1.2, 3.0, 62, 80)]
+    ends = [n[1] for n in piano.key_lengths(chord, pedal)]
+    assert ends[0] == ends[1] == 1.2
+    assert piano.key_lengths(notes, []) == notes
+
+
+def test_tuning_is_measured_and_quiet_audio_is_levelled():
+    import numpy as np
+
+    sr = 16000
+    t = np.arange(sr * 4) / sr
+
+    def tone(cents):
+        f = [220.0, 277.18, 329.63, 440.0]
+        return sum(np.sin(2 * np.pi * x * 2 ** (cents / 1200) * t) for x in f).astype(np.float32) / 8
+
+    for cents in (0, 25, -35):
+        got, sure = transcribe.tuning_cents(tone(cents), sr)
+        assert abs(got - cents) < 2 and sure > 0.8
+    quiet = tone(0) * 0.01
+    levelled = transcribe.level(quiet)
+    assert 0.05 < float(np.sqrt(np.mean(levelled ** 2))) < 0.09
+    assert transcribe.level(np.zeros(1000, np.float32)).max() == 0
+
+
+def test_live_preview_player(tiny_midi):
+    player = render.preview_player(tiny_midi, width=180, height=320)
+    assert player.end > player.first >= 0
+    a, b = player.frame(player.first), player.frame(player.first + 0.2)
+    assert a.size == (180, 320) and a.tobytes() != b.tobytes()
+
+
 def test_piano_stitches_overlapping_windows():
     import numpy as np
 

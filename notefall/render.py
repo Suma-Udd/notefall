@@ -736,10 +736,21 @@ def render(
     return out
 
 
-def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
-                   sustain="keys", split=None, at=None, count=1, fps=20, particles=True,
-                   hands=True):
-    """A few frames from a moment in the song, for a live preview."""
+class PreviewPlayer:
+    """A renderer set up for a live preview: ask it for the picture at any time."""
+
+    def __init__(self, renderer, first, end):
+        self.renderer, self.first, self.end = renderer, first, end
+        self.begin = FADE_IN
+        self.length = max(0.5, end - self.begin)
+
+    def frame(self, t):
+        return self.renderer.frame(min(max(t, 0.0), self.end))
+
+
+def preview_player(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
+                   sustain="keys", split=None, fps=30, particles=True, hands=True):
+    """Everything needed to play a song in the preview, frame by frame."""
     pm = pretty_midi.PrettyMIDI(os.fspath(midi)) if isinstance(midi, (str, os.PathLike)) else midi
     notes = collect_notes(pm, split=split, sustain=sustain)
     if not notes:
@@ -750,13 +761,26 @@ def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, 
                       particles, 1.0, pedal=pedal, hands=hands)
     end = max(n[1] for n in notes)
     r.shift(0.0, [], end + TAIL)
+    return PreviewPlayer(r, notes[0][0], end + TAIL)
+
+
+def preview_frames(midi, width=270, height=480, theme_name=theme.DEFAULT_THEME, title=None,
+                   sustain="keys", split=None, at=None, count=1, fps=20, particles=True,
+                   hands=True):
+    """A few frames from a moment in the song, for a live preview."""
+    pm = pretty_midi.PrettyMIDI(os.fspath(midi)) if isinstance(midi, (str, os.PathLike)) else midi
+    player = preview_player(pm, width, height, theme_name=theme_name, title=title,
+                            sustain=sustain, split=split, fps=fps, particles=particles,
+                            hands=hands)
     if at is None:
         # land a little into the song, on a moment where something is playing
+        notes = collect_notes(pm, split=split, sustain=sustain)
+        end = max(n[1] for n in notes)
         target = notes[0][0] + min(6.0, (end - notes[0][0]) * 0.3)
         playing = [n[0] for n in notes if n[0] >= target]
         at = (playing[0] - 0.1) if playing else target
     at = max(FADE_IN, at)
-    return [r.frame(at + i / fps) for i in range(count)]
+    return [player.renderer.frame(at + i / fps) for i in range(count)]
 
 
 def preview(midi, width=270, height=480, **kw):
