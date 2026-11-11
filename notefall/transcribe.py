@@ -286,17 +286,31 @@ def basic_pitch_notes(audio, onset_threshold=0.65, frame_threshold=0.3,
 
 
 def write_midi(notes, pedals, path):
+    """Write the notes as a piano MIDI with a right hand and a left hand track.
+
+    A recording doesn't say which hand played what, so keyboard.hand_split
+    works it out. Two named tracks is how piano MIDIs are normally written,
+    so NoteFall colours the hands from them and other apps show them too.
+    """
     import pretty_midi
 
+    from . import keyboard
+
+    notes = sorted(notes, key=lambda n: (n[0], n[2]))
+    hands = keyboard.hand_split(notes)
     pm = pretty_midi.PrettyMIDI(initial_tempo=120)
-    piano = pretty_midi.Instrument(program=0, name="piano")
-    for s, e, pitch, vel in sorted(notes, key=lambda n: (n[0], n[2])):
-        piano.notes.append(pretty_midi.Note(velocity=int(vel), pitch=int(pitch),
-                                            start=float(s), end=float(e)))
-    for down, up in pedals:
-        piano.control_changes.append(pretty_midi.ControlChange(64, 127, float(down)))
-        piano.control_changes.append(pretty_midi.ControlChange(64, 0, float(up)))
-    pm.instruments.append(piano)
+    for right, name in ((True, "Right hand"), (False, "Left hand")):
+        track = pretty_midi.Instrument(program=0, name=name)
+        for (s, e, pitch, vel), h in zip(notes, hands):
+            if h == right:
+                track.notes.append(pretty_midi.Note(velocity=int(vel), pitch=int(pitch),
+                                                    start=float(s), end=float(e)))
+        if not track.notes:
+            continue
+        for down, up in pedals:
+            track.control_changes.append(pretty_midi.ControlChange(64, 127, float(down)))
+            track.control_changes.append(pretty_midi.ControlChange(64, 0, float(up)))
+        pm.instruments.append(track)
     pm.write(path)
     return path
 
@@ -310,7 +324,7 @@ def _in_range(notes, lo_hz, hi_hz):
 def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
                frame_threshold=None, minimum_note_length=None, minimum_frequency=None,
                maximum_frequency=None, on_progress=None, on_status=None, lengths="keys",
-               retune=True):
+               retune=True, report=None):
     """Listen to a recording and write a MIDI file. Returns the .mid path.
 
     `engine` is "piano" (the piano model), "basic" (Basic Pitch) or "auto"
@@ -322,9 +336,15 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
     `lengths="keys"` writes each note as long as the key was held, "ring" as
     long as it sounds with the pedal (the pedal is written to the MIDI either
     way). `retune` corrects a piano that isn't tuned to 440 Hz before listening.
+
+    Pass a dict as `report` to learn what happened: "engine", "notes", "tuning"
+    (cents that were corrected, 0 if none) and "clarity" (how sure the piano
+    model was, see piano.clarity and `hard_to_hear`).
     """
     from . import piano
 
+    info = report if report is not None else {}
+    info.update(engine="basic", tuning=0.0, clarity=None)
     notes = pedals = None
     if engine in ("auto", "piano"):
         try:
@@ -339,7 +359,8 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
                 level(audio), on_progress=on_progress, on_status=on_status,
                 onset_threshold=0.4 if onset_threshold is None else onset_threshold,
                 frame_threshold=0.1 if frame_threshold is None else frame_threshold,
-                lengths=lengths)
+                lengths=lengths, report=info)
+            info.update(engine="piano", tuning=cents if stretch != 1.0 else 0.0)
             if stretch != 1.0:
                 notes = [(s / stretch, e / stretch, p, v) for s, e, p, v in notes]
                 pedals = [(d / stretch, u / stretch) for d, u in pedals]
@@ -363,6 +384,27 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
     if not notes:
         raise media.NotefallError("couldn't hear any notes in %s" % os.path.basename(media_path))
 
+    info["notes"] = len(notes)
     if midi_out is None:
         midi_out = media.temp_path(".mid")
     return write_midi(notes, pedals, midi_out)
+
+
+def hard_to_hear(report):
+    """True when the piano model was unsure enough that more notes than usual will be off."""
+    c = report.get("clarity")
+    return c is not None and c < 0.855
+
+
+def summary(report):
+    """One friendly line about how the listening went."""
+    text = "Heard %d notes" % report.get("notes", 0)
+    if abs(report.get("tuning") or 0) >= 1:
+        text += ", piano tuned %d cents %s (corrected)" % (
+            abs(round(report["tuning"])), "sharp" if report["tuning"] > 0 else "flat")
+    if hard_to_hear(report):
+        return text + ". This one is hard to hear clearly (echo, noise or other instruments), " \
+                      "so expect more wrong notes than usual."
+    if report.get("engine") == "basic":
+        return text + " with the basic listener, which is less accurate on piano."
+    return text + "."

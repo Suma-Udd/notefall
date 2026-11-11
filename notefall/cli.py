@@ -127,8 +127,9 @@ def run(args, log=print, on_progress=None, cancel=None):
             raise media.NotefallError(
                 "%s doesn't look like a MIDI file or a recording with sound in it" % args.input)
         log("Listening to %s and writing down the notes..." % os.path.basename(args.input))
-        from .transcribe import transcribe
+        from .transcribe import summary, transcribe
 
+        heard = {}
         midi_path = transcribe(
             args.input,
             midi_out=args.keep_midi,
@@ -141,7 +142,9 @@ def run(args, log=print, on_progress=None, cancel=None):
             retune=not args.no_retune,
             minimum_frequency=args.min_hz,
             maximum_frequency=args.max_hz,
+            report=heard,
         )
+        log(summary(heard))
         if args.keep_midi:
             log("Saved the notes as %s" % midi_path)
         if not audio:

@@ -393,6 +393,41 @@ def test_live_preview_player(tiny_midi):
     assert a.size == (180, 320) and a.tobytes() != b.tobytes()
 
 
+def test_hands_follow_the_music():
+    # the left hand climbs above where the right hand started, the right hand stays above it
+    notes = []
+    for i in range(24):
+        t = i * 0.25
+        notes.append((t, t + 0.2, 40 + i, 80))          # left hand walking up to 63
+        notes.append((t, t + 0.2, 62 + i, 80))          # right hand walking up from 62
+    notes.sort(key=lambda n: (n[0], n[2]))
+    hands = keyboard.hand_split(notes)
+    wrong = sum(h != (p >= 62 + round(t / 0.25)) for (t, _, p, _), h in zip(notes, hands))
+    assert wrong <= 2
+    assert keyboard.hand_split([]) == []
+    # a wide chord can't be one hand
+    assert keyboard.hand_split([(0, 1, 48, 80), (0, 1, 55, 80), (0, 1, 72, 80), (0, 1, 79, 80)]) \
+        == [False, False, True, True]
+
+
+def test_recording_midi_has_two_hand_tracks(tmp_path):
+    notes = [(i * 0.5, i * 0.5 + 0.4, p, 80) for i in range(8) for p in (43, 72)]
+    pm = pretty_midi.PrettyMIDI(transcribe.write_midi(notes, [(0.0, 2.0)], str(tmp_path / "h.mid")))
+    assert [i.name for i in pm.instruments] == ["Right hand", "Left hand"]
+    assert {n.pitch for n in pm.instruments[0].notes} == {72}
+    assert {n.pitch for n in pm.instruments[1].notes} == {43}
+    assert keyboard.pedal_intervals(pm.instruments) == [(0.0, 2.0)]
+    hands = {n[2]: n[4] for n in render.collect_notes(pm)}
+    assert hands == {72: True, 43: False}
+
+
+def test_listening_summary():
+    assert transcribe.summary({"notes": 12, "tuning": 0.0, "clarity": 0.88, "engine": "piano"}) \
+        == "Heard 12 notes."
+    text = transcribe.summary({"notes": 12, "tuning": 24.6, "clarity": 0.80, "engine": "piano"})
+    assert "25 cents sharp" in text and "hard to hear" in text
+
+
 def test_piano_stitches_overlapping_windows():
     import numpy as np
 

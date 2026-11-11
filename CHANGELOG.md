@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- **The hands are told apart properly in recordings.** A recording doesn't say which hand played a note, so everything above one fixed pitch used to be painted as the right hand, which is wrong whenever a hand wanders. The split point now moves with the music: it follows the gap between the hands and never asks one hand to stretch further than a hand can. Checked on 311 classical pieces where the hands are written out, wrong hand notes went from 17% to 8%. The same goes for any MIDI with a single track.
+- The MIDI saved from a recording has a **Right hand** and a **Left hand** track, like a normal piano MIDI, so other apps show the hands too.
+- After listening, the app tells you how it went: how many notes it heard, whether it corrected the piano's tuning, and a warning when the recording is hard to hear clearly (echo, noise, other instruments), because then more notes will be off.
+
 ## 0.6.0
 
 - **Notes from recordings are the right length.** With the sustain pedal down every note used to come out as long as it rings, 3 to 4 times longer than the key was held, which filled the screen with long bars. Now a pedalled note ends when that hand plays its next note. Measured on real concert recordings with known notes, the typical note went from 2.8 to 3.9 times too long down to 1.1 to 1.8. The pedal is still written to the MIDI, so the sound is the same, and "Notes ring with the pedal" (or `--note-lengths ring`) brings the long bars back.
