@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- **Notes from recordings are the right length.** With the sustain pedal down every note used to come out as long as it rings, 3 to 4 times longer than the key was held, which filled the screen with long bars. Now a pedalled note ends when that hand plays its next note. Measured on real concert recordings with known notes, the typical note went from 2.8 to 3.9 times too long down to 1.1 to 1.8. The pedal is still written to the MIDI, so the sound is the same, and "Notes ring with the pedal" (or `--note-lengths ring`) brings the long bars back.
+- **Out of tune pianos are heard properly.** A piano (or an upload) a quarter of a semitone off made the listener invent notes: 85% right at +25 cents, 70% at -35. NoteFall now measures the tuning and corrects it before listening, which brings both back to 96%.
+- **Quiet recordings keep their soft notes.** The volume is evened out first (a very quiet take went from 90% to 96%).
+- **Save the notes as MIDI from the app.** Once a recording has been listened to, the Song card gets a "Notes as MIDI · Save…" row, so mp3 to MIDI is one click (it used to need the command line).
+- Slightly stricter about what counts as a note, so fewer ghost notes in echoey rooms.
+- **The preview is live.** It plays the song from the start at 30 fps instead of looping two seconds, and cross-fades when you change the look, the format or a switch.
+- **The app moves.** Buttons fade between states, switches and the selection ring glide, the progress fill is smooth, the list scrolls softly and shows a thumb when there's more, the window fades in, the button turns green when the video is done, and listening shows a progress ring. The empty window plays a tiny NoteFall of its own.
+
 ## 0.5.1
 
 - A **Check for updates** button under Create Video. It tells you if you're up to date, and when there's a new version it turns blue: one click downloads and installs it (on Mac and Linux it opens the download page).

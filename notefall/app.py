@@ -12,12 +12,15 @@ Windows screen at 150% as well as on a Mac.
 """
 
 import json
+import math
 import multiprocessing
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 
 import tkinter as tk
@@ -54,8 +57,7 @@ PALETTES = {
     },
 }
 
-PREVIEW_FRAMES = 40
-PREVIEW_FPS = 20
+PREVIEW_FPS = 30
 SS = 3  # supersampling for smooth edges
 
 P = dict(PALETTES["light"])  # the palette in use
@@ -69,6 +71,51 @@ def px(n):
 def _rgb(hex_colour):
     h = hex_colour.lstrip("#")
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def mix(a, b, t):
+    """Colour `a` moved `t` of the way (0..1) to colour `b`."""
+    return "#%02X%02X%02X" % tuple(int(round(p + (q - p) * t)) for p, q in zip(_rgb(a), _rgb(b)))
+
+
+def ease(t):
+    """Fast at first, soft landing."""
+    return 1 - (1 - t) ** 3
+
+
+class Tween:
+    """A number that glides to its target and tells `fn` each step of the way.
+
+    Everything that moves in the app (switches, the segmented knob, button
+    colours, the progress fill, scrolling) runs on one of these, timed by the
+    clock so it takes the same time on a slow machine as on a fast one.
+    """
+
+    def __init__(self, widget, fn, value=0.0, ms=180):
+        self.widget, self.fn, self.ms = widget, fn, ms
+        self.value = self.target = float(value)
+        self._job = None
+
+    def to(self, target, ms=None):
+        self.start, self.target = self.value, float(target)
+        self.t0, self.dur = time.perf_counter(), max(1, ms or self.ms) / 1000
+        if self._job is None:
+            self._step()
+
+    def jump(self, value):
+        self.value = self.target = self.start = float(value)
+        self.t0, self.dur = 0.0, 0.001
+
+    def _step(self):
+        self._job = None
+        f = min(1.0, (time.perf_counter() - self.t0) / self.dur)
+        self.value = self.start + (self.target - self.start) * ease(f)
+        try:
+            self.fn(self.value)
+            if f < 1.0:
+                self._job = self.widget.after(12, self._step)
+        except tk.TclError:
+            pass  # the widget is gone
 
 
 def open_path(path):
@@ -226,31 +273,49 @@ class Card(tk.Frame):
 
 
 class Button(Canvas):
-    """A filled pill button that can turn into a progress bar."""
+    """A filled pill button that can turn into a progress bar.
+
+    Its colour fades between states instead of snapping, the progress fill
+    glides, and `flash` shows a short "done" state.
+    """
 
     def __init__(self, parent, text, command, width, height, font=None, bg=None):
         bg = bg or P["side"]
         super().__init__(parent, width, height, bg=bg, cursor="hand2")
         self.command, self.enabled = command, True
-        self.w, self.h, self.font = width, height, font
-        r = px(11)
-        looks = {"normal": P["accent"], "hover": P["accent_hover"], "down": P["accent_down"],
-                 "disabled": P["accent_off"]}
-        self.looks = {k: self.keep(k, rounded(width, height, r, c, bg=bg)) for k, c in looks.items()}
-        self.bgimg = self.create_image(0, 0, anchor="nw", image=self.looks["normal"])
+        self.w, self.h, self.font, self.text = width, height, font, text
+        self.r = px(11)
+        self.colour = self._from = self._to = P["accent"]
+        self._pill = None
+        self._flash = False
+        self._pill_font = None
+        self.bgimg = self.create_image(0, 0, anchor="nw")
         self.label = self.create_text(width / 2, height / 2, text=text, font=font, fill="#FFFFFF")
+        self.fade = Tween(self, lambda t: self._paint(mix(self._from, self._to, t)), 1.0, ms=150)
+        self.fill = Tween(self, self._paint_pill, 0.0, ms=320)
+        self._paint(self.colour)
         self.bind("<Enter>", lambda e: self._show("hover"))
         self.bind("<Leave>", lambda e: self._show("normal"))
-        self.bind("<ButtonPress-1>", lambda e: self._show("down"))
+        self.bind("<ButtonPress-1>", lambda e: self._show("down", ms=70))
         self.bind("<ButtonRelease-1>", self._release)
 
-    def _show(self, state):
-        if getattr(self, "_pill", None):
+    def _paint(self, colour):
+        self.colour = colour
+        self.itemconfigure(self.bgimg, image=self.keep(
+            "bg", rounded(self.w, self.h, self.r, colour, bg=self["bg"])))
+
+    def _go(self, colour, ms=150):
+        self._from, self._to = self.colour, colour
+        self.fade.jump(0.0)
+        self.fade.to(1.0, ms)
+
+    def _show(self, state, ms=150):
+        if self._pill is not None or self._flash:
             return
         if not self.enabled:
             state = "disabled"
-        self.itemconfigure(self.bgimg, image=self.looks[state])
-        self.itemconfigure(self.label, fill="#FFFFFF" if self.enabled else "#FFFFFFAA"[:7])
+        self._go({"normal": P["accent"], "hover": P["accent_hover"], "down": P["accent_down"],
+                  "disabled": P["accent_off"]}[state], ms)
 
     def _release(self, e):
         inside = 0 <= e.x <= self.w and 0 <= e.y <= self.h
@@ -262,34 +327,64 @@ class Button(Canvas):
         """Turn the button into a progress pill (frac 0..1), or back with None."""
         if frac is None:
             self._pill = None
-            self.itemconfigure(self.label, state="normal")
-            self._show("normal")
+            self._flash = False
+            self.fill.jump(0.0)
+            self.itemconfigure(self.label, state="normal", text=self.text)
+            self._paint(P["accent"] if self.enabled else P["accent_off"])
             return
-        key = (int(frac * self.w), text)
-        if getattr(self, "_pill", None) == key:
+        if self._pill is None:
+            self.fill.jump(0.0)
+        self._flash = False
+        self._pill = text
+        self.itemconfigure(self.label, state="hidden")
+        if abs(frac - self.fill.target) < 1e-4:
+            self._paint_pill(self.fill.value)
+        else:
+            self.fill.to(frac)
+
+    def _paint_pill(self, frac):
+        if self._pill is None:
             return
-        self._pill = key
         from .render import UI_FONT, load_font
 
         w, h = self.w * SS, self.h * SS
-        font = load_font(self.h * 0.36 * SS, UI_FONT)
+        if self._pill_font is None:
+            self._pill_font = load_font(self.h * 0.36 * SS, UI_FONT)
 
         def layer(back, fore):
             im = Image.new("RGBA", (w, h), _rgb(back) + (255,))
-            ImageDraw.Draw(im).text((w / 2, h / 2), text, font=font, fill=_rgb(fore), anchor="mm")
+            ImageDraw.Draw(im).text((w / 2, h / 2), self._pill, font=self._pill_font,
+                                    fill=_rgb(fore), anchor="mm")
             return im
 
         base, top = layer(P["accent_soft"], P["accent"]), layer(P["accent"], "#FFFFFF")
-        cut = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(cut).rectangle([0, 0, int(w * frac), h], fill=255)
-        base.paste(top, (0, 0), cut)
+        edge = int(w * max(0.0, min(1.0, frac)))
+        if edge > 0:
+            # the filled part gets a rounded end of its own, like a real progress bar
+            cut = Image.new("L", (w, h), 0)
+            ImageDraw.Draw(cut).rounded_rectangle([-h, 0, edge, h - 1], radius=self.r * SS, fill=255)
+            base.paste(top, (0, 0), cut)
         shape = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(shape).rounded_rectangle([0, 0, w - 1, h - 1], radius=px(11) * SS, fill=255)
+        ImageDraw.Draw(shape).rounded_rectangle([0, 0, w - 1, h - 1], radius=self.r * SS, fill=255)
         out = Image.new("RGBA", (w, h), _rgb(self["bg"]) + (255,))
         out.paste(base, (0, 0), shape)
-        out = out.resize((self.w, self.h), Image.LANCZOS)
-        self.itemconfigure(self.bgimg, image=self.keep("pill", out))
-        self.itemconfigure(self.label, state="hidden")
+        self.itemconfigure(self.bgimg, image=self.keep(
+            "bg", out.resize((self.w, self.h), Image.LANCZOS)))
+
+    def flash(self, text, colour, ms=1900):
+        """Show `text` on a `colour` button for a moment (the 'done' state)."""
+        self._flash = False
+        self.itemconfigure(self.label, text=text, state="normal")
+        self._go(colour, 260)
+        self._flash = True
+        self.after(ms, self._unflash)
+
+    def _unflash(self):
+        if not self._flash:
+            return
+        self._flash = False
+        self.itemconfigure(self.label, text=self.text)
+        self._show("normal", ms=320)
 
     def set_enabled(self, on):
         self.enabled = on
@@ -317,8 +412,9 @@ class Segmented(Canvas):
                                         fill=P["text"]) for i, (_, label) in enumerate(options)]
         self.x = self._target()
         self._place()
+        self.slide = Tween(self, self._move, self.x, ms=240)
         self.bind("<ButtonRelease-1>", self._click)
-        self.trace(variable, self._animate)
+        self.trace(variable, lambda: self.slide.to(self._target()))
 
     def _index(self):
         keys = [k for k, _ in self.options]
@@ -332,16 +428,9 @@ class Segmented(Canvas):
         for i, item in enumerate(self.labels):
             self.itemconfigure(item, fill=P["text"] if i == self._index() else P["sub"])
 
-    def _animate(self):
-        target = self._target()
-        step = (target - self.x) * 0.45
-        if abs(step) < 0.5:
-            self.x = target
-            self._place()
-            return
-        self.x += step
+    def _move(self, x):
+        self.x = x
         self._place()
-        self.after(12, self._animate)
 
     def _click(self, e):
         i = int(min(len(self.options) - 1, max(0, (e.x - 2) // self.seg)))
@@ -352,42 +441,34 @@ class Segmented(Canvas):
 
 
 class Toggle(Canvas):
-    """An iOS style switch bound to a BooleanVar."""
+    """An iOS style switch bound to a BooleanVar. The knob glides and the track fades."""
+
+    STEPS = 10
 
     def __init__(self, parent, variable, bg=None):
         bg = bg or P["card"]
         self.W, self.H = px(40), px(24)
         super().__init__(parent, self.W, self.H, bg=bg, cursor="hand2")
         self.var = variable
-        self.on_img = self.keep("on", rounded(self.W, self.H, self.H // 2, P["green"], bg=bg))
-        self.off_img = self.keep("off", rounded(self.W, self.H, self.H // 2, P["track"], bg=bg))
         self.track = self.create_image(0, 0, anchor="nw")
         k = self.H - 4
         self.sh = px(2)
         self.knob = self.create_image(0, 0, anchor="nw", image=self.keep(
             "knob", rounded(k, k, k // 2, "#FFFFFF", shadow=self.sh, shadow_alpha=50)))
-        self.x = self._target()
-        self._place()
+        self.pos = Tween(self, self._place, 1.0 if variable.get() else 0.0, ms=220)
+        self._place(self.pos.value)
         self.bind("<ButtonRelease-1>", lambda e: self.var.set(not self.var.get()))
-        self.trace(variable, self._animate)
+        self.trace(variable, lambda: self.pos.to(1.0 if self.var.get() else 0.0))
 
-    def _target(self):
-        return self.W - self.H + 2 if self.var.get() else 2
-
-    def _place(self):
-        self.itemconfigure(self.track, image=self.on_img if self.var.get() else self.off_img)
-        self.coords(self.knob, self.x - 2 * self.sh, 2 - 2 * self.sh)
-
-    def _animate(self):
-        target = self._target()
-        step = (target - self.x) * 0.5
-        if abs(step) < 0.5:
-            self.x = target
-            self._place()
-            return
-        self.x += step
-        self._place()
-        self.after(12, self._animate)
+    def _place(self, t):
+        q = int(round(max(0.0, min(1.0, t)) * self.STEPS))
+        key = "track%d" % q
+        if key not in self._imgs:
+            self.keep(key, rounded(self.W, self.H, self.H // 2,
+                                   mix(P["track"], P["green"], q / self.STEPS), bg=self["bg"]))
+        self.itemconfigure(self.track, image=self._imgs[key])
+        x = 2 + (self.W - self.H) * t
+        self.coords(self.knob, x - 2 * self.sh, 2 - 2 * self.sh)
 
 
 class Swatches(Canvas):
@@ -402,15 +483,19 @@ class Swatches(Canvas):
         w = len(keys) * self.D + (len(keys) - 1) * self.GAP + 8
         super().__init__(parent, w, self.D + 8, bg=bg, cursor="hand2")
         self.keys, self.var = keys, variable
-        self.rings = {}
         for i, key in enumerate(keys):
             x = 4 + i * (self.D + self.GAP)
             self.create_image(x, 4, anchor="nw", image=self.keep(key, self._dot(theme.get(key), bg)))
-            self.rings[key] = self.create_image(x - 4, 0, anchor="nw")
-        self.ring = self.keep("ring", self._ring())
-        self._place()
+        # one ring that slides to whichever look is picked
+        self.ring = self.create_image(self._ring_x(), 0, anchor="nw",
+                                      image=self.keep("ring", self._ring()))
+        self.slide = Tween(self, lambda x: self.coords(self.ring, x, 0), self._ring_x(), ms=260)
         self.bind("<ButtonRelease-1>", self._click)
-        self.trace(variable, self._place)
+        self.trace(variable, lambda: self.slide.to(self._ring_x()))
+
+    def _ring_x(self):
+        i = self.keys.index(self.var.get()) if self.var.get() in self.keys else 0
+        return i * (self.D + self.GAP)
 
     def _dot(self, pal, bg):
         d = self.D * SS
@@ -427,10 +512,6 @@ class Swatches(Canvas):
         ImageDraw.Draw(img).ellipse([SS, SS, d - SS - 1, d - SS - 1],
                                     outline=_rgb(P["accent"]) + (255,), width=int(2.2 * SS))
         return img.resize((self.D + 8, self.D + 8), Image.LANCZOS)
-
-    def _place(self):
-        for key, item in self.rings.items():
-            self.itemconfigure(item, image=self.ring if key == self.var.get() else "")
 
     def _click(self, e):
         i = int(max(0, min(len(self.keys) - 1, (e.x - 4) // (self.D + self.GAP))))
@@ -479,6 +560,9 @@ class ScrollArea(tk.Frame):
         self.canvas.pack(fill="both", expand=True)
         self.body = tk.Frame(self.canvas, bg=bg)
         self.win = self.canvas.create_window(0, 0, anchor="nw", window=self.body)
+        self.glide = Tween(self, self._goto, 0.0, ms=240)
+        # a slim thumb on the right edge, only there when there is more to scroll to
+        self.thumb = tk.Frame(self, bg=P["line"], width=max(3, px(4)))
         self.body.bind("<Configure>", lambda e: self._fit())
         self.canvas.bind("<Configure>", lambda e: (
             self.canvas.itemconfigure(self.win, width=e.width), self._fit()))
@@ -491,18 +575,34 @@ class ScrollArea(tk.Frame):
         h = self.body.winfo_reqheight()
         self.canvas.configure(scrollregion=(0, 0, 1, h))
         if h <= self.canvas.winfo_height():
+            self.glide.jump(0.0)
             self.canvas.yview_moveto(0)
+        self._thumb()
+
+    def _thumb(self):
+        h, view = self.body.winfo_reqheight(), self.canvas.winfo_height()
+        if h <= view + 1 or view < 20:
+            self.thumb.place_forget()
+            return
+        top = self.canvas.yview()[0]
+        self.thumb.place(relx=1.0, anchor="ne", y=int(top * view), height=max(px(24), int(view * view / h)))
+
+    def _goto(self, y):
+        h = self.body.winfo_reqheight()
+        self.canvas.yview_moveto(y / h if h else 0)
+        self._thumb()
 
     def _wheel(self, e):
-        if self.body.winfo_reqheight() <= self.canvas.winfo_height():
+        h, view = self.body.winfo_reqheight(), self.canvas.winfo_height()
+        if h <= view:
             return
         if getattr(e, "num", None) in (4, 5):
             step = -1 if e.num == 4 else 1
         elif sys.platform == "darwin":
-            step = -e.delta
+            step = -e.delta / 3
         else:
-            step = -int(e.delta / 120) or (-1 if e.delta > 0 else 1)
-        self.canvas.yview_scroll(step, "units")
+            step = -e.delta / 120
+        self.glide.to(min(max(0.0, self.glide.target + step * px(54)), h - view))
 
 
 class Pill(Canvas):
@@ -599,10 +699,22 @@ class App:
         self.cancel = threading.Event()
         self.busy = False
         self.midi_for_input = {}
+        self._midi_lock = threading.Lock()
         self.preview_job = None
         self.preview_token = 0
-        self.frames = []
-        self.frame_i = 0
+        self.mode = "idle"          # what the stage shows: empty, message, play, idle
+        self.player = None          # the live preview of the song
+        self.play_t = 0.0
+        self.play_song = None
+        self.want = None            # (token, player, time) the main thread asks for
+        self.ready = None           # (token, time, picture) the render thread hands back
+        self.shown = None           # the picture on the stage right now
+        self.fade_from = None
+        self.fade_t0 = 0.0
+        self.ring_frac = None
+        self.ring_shown = 0.0
+        self.hover = None
+        self._last_tick = time.perf_counter()
         self.result = None
         self.update_info = None
         self._updating = False
@@ -636,8 +748,10 @@ class App:
         self.hands.trace_add("write", lambda *_: self._remember())
         self.sound.trace_add("write", lambda *_: self._sound_hint())
         self.root.after(80, self._poll)
+        threading.Thread(target=self._render_loop, daemon=True).start()
         self.root.after(int(1000 / PREVIEW_FPS), self._tick)
         self.root.after(1500, self._check_update)
+        self._fade_in()
 
     # setup ---------------------------------------------------------------
 
@@ -648,6 +762,15 @@ class App:
             return max(1.0, min(3.0, self.root.winfo_fpixels("1i") / 96.0))
         except Exception:
             return 1.0
+
+    def _fade_in(self):
+        """The window fades in instead of popping up (where the system can do that)."""
+        try:
+            self.root.attributes("-alpha", 0.0)
+            Tween(self.root, lambda a: self.root.attributes("-alpha", a), 0.0, ms=260).to(1.0)
+            self.root.after(600, lambda: self.root.attributes("-alpha", 1.0))
+        except tk.TclError:
+            pass
 
     def _fonts(self):
         families = set(tkfont.families())
@@ -675,7 +798,7 @@ class App:
         r = self.root
         r.title("NoteFall")
         sw, sh = r.winfo_screenwidth(), r.winfo_screenheight()
-        w, h = min(px(1160), int(sw * 0.9)), min(px(800), int(sh * 0.88))
+        w, h = min(px(1160), int(sw * 0.9)), min(px(900), int(sh * 0.9))
         r.geometry("%dx%d+%d+%d" % (w, h, (sw - w) // 2, max(0, (sh - h) // 3)))
         r.minsize(min(px(920), w), min(px(700), h))
         try:
@@ -747,11 +870,12 @@ class App:
         side_outer.pack_propagate(False)
         tk.Frame(self.root, bg=P["edge"], width=1).pack(side="right", fill="y")
         side = tk.Frame(side_outer, bg=P["side"])
-        side.pack(fill="both", expand=True, padx=px(28), pady=(px(22), px(22)))
+        gutter = px(14)  # room on the right for the scroll thumb
+        side.pack(fill="both", expand=True, padx=(px(28), px(28) - gutter), pady=(px(22), px(22)))
 
         # header
         head = tk.Frame(side, bg=P["side"])
-        head.pack(fill="x")
+        head.pack(fill="x", padx=(0, gutter))
         try:
             from .icon import draw_icon
 
@@ -774,7 +898,7 @@ class App:
 
         # bottom: button and status (packed first so it always has room)
         bottom = tk.Frame(side, bg=P["side"])
-        bottom.pack(side="bottom", fill="x")
+        bottom.pack(side="bottom", fill="x", padx=(0, gutter))
         status_row = tk.Frame(bottom, bg=P["side"], height=px(24))
         status_row.pack(fill="x", pady=(0, px(8)))
         status_row.pack_propagate(False)
@@ -801,7 +925,8 @@ class App:
 
         scroll = ScrollArea(side, P["side"])
         scroll.pack(fill="both", expand=True, pady=(px(2), px(12)))
-        side = scroll.body
+        side = tk.Frame(scroll.body, bg=P["side"])
+        side.pack(fill="both", expand=True, padx=(0, gutter))
 
         # song
         body, _ = self._group(side, "Song", "MIDI files are exact. Recordings (mp3, mp4, wav…) "
@@ -814,6 +939,16 @@ class App:
         self.change.pack(side="right")
         self.change.bind("<Button-1>", lambda e: self.pick_input())
         self.song_label.bind("<Button-1>", lambda e: self.pick_input())
+        # shown once a recording has been listened to: keep the notes as a MIDI file
+        self.midi_row = tk.Frame(body, bg=P["card"])
+        tk.Frame(self.midi_row, bg=P["line"], height=1).pack(fill="x", pady=px(6))
+        row = tk.Frame(self.midi_row, bg=P["card"])
+        row.pack(fill="x")
+        self._label(row, "Notes as MIDI", anchor="w").pack(side="left")
+        save = self._label(row, "Save…", fg=P["accent"], cursor="hand2")
+        save.pack(side="right")
+        save.bind("<Button-1>", lambda e: self.save_midi())
+        self._midi_row_update()
 
         # video
         body, _ = self._group(side, "Video")
@@ -855,11 +990,19 @@ class App:
         self.stage.pack(side="left", fill="both", expand=True, padx=px(28), pady=px(28))
         self.stage.bind("<Configure>", lambda e: self._stage_changed())
         self.stage.bind("<Button-1>", lambda e: (not self.input_path.get()) and self.pick_input())
+        self.stage.bind("<Enter>", lambda e: self.hover and self.hover.to(1.0))
+        self.stage.bind("<Leave>", lambda e: self.hover and self.hover.to(0.0))
         self.stage_img = self.stage.create_image(0, 0, anchor="center")
         self.stage_text = self.stage.create_text(0, 0, text="", font=self.f_big, fill=P["text"])
         self.stage_sub = self.stage.create_text(0, 0, text="", font=self.f_body, fill=P["sub"],
                                                 justify="center")
-        self.frames = []
+        self.hover = Tween(self.stage, lambda v: None, 0.0, ms=200)
+        self.photo = None
+        self.shown = None
+        self.player = None
+        self.want = None
+        self._cards = {}
+        self.mode = "idle"
 
     # stage ----------------------------------------------------------------
 
@@ -873,91 +1016,232 @@ class App:
         if not self.input_path.get():
             self._empty_stage()
         elif self._stage_msg:
-            self._stage_message(*self._stage_msg)
+            self._stage_message(*self._stage_msg, progress=self.ring_frac,
+                                ring=getattr(self, "ring_on", False))
         else:
             cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
             self.stage.coords(self.stage_img, cw / 2, ch / 2)
             self.schedule_preview()
 
+    def _put(self, img, x=None, y=None):
+        """Show a picture on the stage, reusing the same Tk image when the size allows."""
+        if self.photo is None or (self.photo.width(), self.photo.height()) != img.size:
+            self.photo = ImageTk.PhotoImage(img)
+            self.stage.itemconfigure(self.stage_img, image=self.photo)
+        else:
+            self.photo.paste(img)
+        cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
+        self.stage.coords(self.stage_img, cw / 2 if x is None else x, ch / 2 if y is None else y)
+
+    # the empty state: a small NoteFall playing by itself inside the drop card
+
     def _empty_stage(self):
         cw, ch = max(200, self.stage.winfo_width()), max(200, self.stage.winfo_height())
         w, h = min(px(420), cw - px(60)), min(px(300), ch - px(60))
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        dash = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-        d = ImageDraw.Draw(dash)
-        d.rounded_rectangle([0, 0, w * SS - 1, h * SS - 1], radius=px(22) * SS,
-                            fill=_rgb(P["card"]) + (255,), outline=_rgb(P["line"]) + (255,),
-                            width=max(SS, int(1.5 * SS * UI)))
-        img = dash.resize((w, h), Image.LANCZOS)
-        bg = Image.new("RGBA", (w, h), _rgb(P["window"]) + (255,))
-        bg.alpha_composite(img)
-        img = bg
-        try:
-            from .icon import draw_icon
-
-            s = px(72)
-            icon = draw_icon(256).resize((s, s), Image.LANCZOS)
-            img.alpha_composite(icon, ((w - s) // 2, int(h * 0.2)))
-        except Exception:
-            pass
-        self.frames = []
-        self.stage.coords(self.stage_img, cw / 2, ch / 2)
-        self.stage.itemconfigure(self.stage_img, image=self.stage.keep("empty", img))
-        self.stage.itemconfigure(self.stage_text, text="Choose a song")
+        self._card_size = (w, h)
+        self._cards = {}
+        self.mode = "empty"
+        self.player = self.want = None
+        self._stage_msg = None
+        self.stage.itemconfigure(self.stage_text, text="Choose a song", fill=P["text"])
         self.stage.itemconfigure(self.stage_sub, text="A MIDI file, or any recording of a piano")
         self.stage.coords(self.stage_text, cw / 2, ch / 2 + h * 0.14)
         self.stage.coords(self.stage_sub, cw / 2, ch / 2 + h * 0.14 + px(30))
         self.stage.configure(cursor="hand2")
+        self._draw_empty(time.perf_counter())
 
-    def _stage_message(self, title, sub=""):
+    def _card(self, q):
+        """The drop card, its border leaning towards blue as the mouse comes over it."""
+        if q not in self._cards:
+            w, h = self._card_size
+            card = rounded(w, h, px(22), mix(P["card"], P["accent_soft"], q / 6 * 0.35),
+                           outline=mix(P["line"], P["accent"], q / 6),
+                           width=1.5 * UI, bg=P["window"])
+            self._cards[q] = card.convert("RGB")
+        return self._cards[q]
+
+    LANES = ((0.00, 0.34, 0), (0.37, 0.22, 1), (0.71, 0.30, 0), (0.18, 0.42, 1),
+             (0.55, 0.20, 0), (0.86, 0.36, 1), (0.29, 0.26, 0))
+
+    def _draw_empty(self, now):
+        w, h = self._card_size
+        q = int(round(self.hover.value * 6))
+        img = self._card(q).copy()
+        aw, ah = min(px(168), w - px(40)), int(h * 0.36)
+        key_h = max(3, px(7))
+        s = SS
+        layer = Image.new("RGB", (aw * s, (ah + key_h + px(5)) * s), img.getpixel((w // 2, h // 3)))
+        d = ImageDraw.Draw(layer)
+        lane = aw * s / len(self.LANES)
+        bar_w = lane * 0.56
+        floor = ah * s
+        back = layer.getpixel((0, 0))
+        for i, (offset, length, hand) in enumerate(self.LANES):
+            colour = P["accent"] if hand else P["green"]
+            x0 = i * lane + (lane - bar_w) / 2
+            L = length * floor
+            y1 = ((now * 0.22 + offset) % 1.0) * (floor + L)
+            y0 = y1 - L
+            top, bottom = max(0.0, y0), min(float(floor), y1)
+            if bottom - top > 2:
+                # bars fade in as they enter at the top
+                fade = min(1.0, bottom / (floor * 0.35))
+                d.rounded_rectangle([x0, top, x0 + bar_w, bottom],
+                                    radius=min(bar_w * 0.32, (bottom - top) / 2),
+                                    fill=mix("#%02X%02X%02X" % back, colour, fade))
+            hit = y0 < floor <= y1
+            d.rounded_rectangle([i * lane + s, floor + px(5) * s, (i + 1) * lane - s,
+                                 floor + (px(5) + key_h) * s], radius=key_h * s * 0.4,
+                                fill=colour if hit else P["track"])
+        layer = layer.resize((aw, ah + key_h + px(5)), Image.LANCZOS)
+        img.paste(layer, ((w - aw) // 2, int(h * 0.12)))
+        self._put(img)
+
+    # messages, with a progress ring while a recording is listened to
+
+    def _stage_message(self, title, sub="", progress=None, ring=False):
         self._stage_msg = (title, sub)
-        self.frames = []
+        self.player = self.want = None
+        if self.mode != "message" or not ring:
+            self.ring_shown = 0.0
+            self.stage.itemconfigure(self.stage_img, image="")
+            self.photo = None
+        self.mode = "message"
+        self.ring_on = ring
+        self.ring_frac = progress
         cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
-        self.stage.itemconfigure(self.stage_img, image="")
+        lift = px(34) if ring else 0
         self.stage.itemconfigure(self.stage_text, text=title)
         self.stage.itemconfigure(self.stage_sub, text=sub, width=max(200, cw - px(80)))
-        self.stage.coords(self.stage_text, cw / 2, ch / 2 - px(10))
-        self.stage.coords(self.stage_sub, cw / 2, ch / 2 + px(22))
+        self.stage.coords(self.stage_text, cw / 2, ch / 2 - px(10) + lift)
+        self.stage.coords(self.stage_sub, cw / 2, ch / 2 + px(22) + lift)
         self.stage.configure(cursor="")
 
-    def _show_frames(self, frames):
-        """Rounded corners and a soft shadow around each preview frame."""
-        if not frames:
+    def _draw_ring(self, now):
+        if not getattr(self, "ring_on", False):
             return
-        self._stage_msg = None
-        w, h = frames[0].size
+        size = px(64)
+        s = size * SS
+        img = Image.new("RGB", (s, s), _rgb(P["window"]))
+        d = ImageDraw.Draw(img)
+        t = int(s * 0.1)
+        box = [t, t, s - t, s - t]
+        d.arc(box, 0, 360, fill=_rgb(P["track"]), width=t)
+        if self.ring_frac is None:
+            a = (now * 300) % 360          # nothing to measure yet: a turning arc
+            d.arc(box, a, a + 90, fill=_rgb(P["accent"]), width=t)
+            ends = (a, a + 90)
+        else:
+            self.ring_shown += (self.ring_frac - self.ring_shown) * 0.18
+            ends = (-90, -90 + 360 * max(0.01, self.ring_shown))
+            d.arc(box, ends[0], ends[1], fill=_rgb(P["accent"]), width=t)
+        r = (s - 2 * t) / 2 - t / 2
+        for a in ends:  # round caps
+            x, y = s / 2 + math.cos(math.radians(a)) * r, s / 2 + math.sin(math.radians(a)) * r
+            d.ellipse([x - t / 2, y - t / 2, x + t / 2, y + t / 2], fill=_rgb(P["accent"]))
+        cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
+        self._put(img.resize((size, size), Image.LANCZOS), y=ch / 2 - px(40))
+
+    # the live preview: the song really plays, at the size it is shown
+
+    def _dress(self, player, frame):
+        """Rounded corners and a soft shadow around a preview frame."""
+        img = player.base.copy()
+        img.paste(frame, (player.pad, player.pad), player.mask)
+        return img
+
+    def _prepare(self, player, w, h):
         r = max(px(10), min(w, h) // 22)
         mask = Image.new("L", (w * SS, h * SS), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, w * SS - 1, h * SS - 1], radius=r * SS, fill=255)
-        mask = mask.resize((w, h), Image.LANCZOS)
-        base = rounded(w, h, r, "#000000", shadow=px(14), bg=P["window"])
-        pad = (base.width - w) // 2
-        out = []
-        for f in frames:
-            img = base.copy()
-            img.paste(f, (pad, pad), mask)
-            out.append(ImageTk.PhotoImage(img))
-        self.frames = out
-        self.frame_i = 0
-        cw, ch = self.stage.winfo_width(), self.stage.winfo_height()
-        self.stage.coords(self.stage_img, cw / 2, ch / 2)
+        player.mask = mask.resize((w, h), Image.LANCZOS)
+        player.base = rounded(w, h, r, "#000000", shadow=px(14), bg=P["window"]).convert("RGB")
+        player.pad = (player.base.width - w) // 2
+        return player
+
+    def _render_loop(self):
+        """Draws preview frames off the main thread, always the newest one asked for."""
+        last = None
+        while True:
+            job = self.want
+            if job is None or job is last:
+                time.sleep(0.004)
+                continue
+            last = job
+            token, player, t = job
+            try:
+                self.ready = (token, self._dress(player, player.frame(t)))
+            except Exception:
+                time.sleep(0.05)
+
+    def _start_player(self, player, song):
+        was_playing = self.mode == "play" and self.shown is not None
+        if song != self.play_song or self.player is None:
+            if song != self.play_song:
+                # a new song starts just before its first note lands
+                self.play_t = max(player.begin, player.first - 1.2)
+            self.play_song = song
+        self.play_t = min(max(self.play_t, player.begin), player.end)
+        size = player.base.size
+        if was_playing and self.shown.size == size:
+            self.fade_from = self.shown                      # same size: cross-fade
+        elif was_playing:
+            self.fade_from = None                            # resized: just swap
+        else:
+            self.fade_from = Image.new("RGB", size, _rgb(P["window"]))  # fade in
+        self.fade_t0 = None
+        self._stage_msg = None
+        self.player = player
+        self.mode = "play"
+        self.ready = None
         self.stage.configure(cursor="")
         self.stage.itemconfigure(self.stage_text, text="")
         self.stage.itemconfigure(self.stage_sub, text="")
 
+    def _advance(self, dt, now):
+        player = self.player
+        if player is None:
+            return
+        if not self.busy:
+            self.play_t += dt
+            if self.play_t > player.end:
+                self.play_t = player.begin
+        self.want = (self.preview_token, player, self.play_t)
+        got, self.ready = self.ready, None
+        if not got or got[0] != self.preview_token:
+            return
+        img = got[1]
+        if self.fade_from is not None:
+            if self.fade_t0 is None:
+                self.fade_t0 = now
+            f = (now - self.fade_t0) / 0.28
+            if f >= 1.0 or self.fade_from.size != img.size:
+                self.fade_from = None
+            else:
+                self.shown = img
+                self._put(Image.blend(self.fade_from, img, ease(f)))
+                return
+        self.shown = img
+        self._put(img)
+
     def _tick(self):
-        if self.frames:
-            self.frame_i = (self.frame_i + 1) % len(self.frames)
-            try:
-                self.stage.itemconfigure(self.stage_img, image=self.frames[self.frame_i])
-            except tk.TclError:
-                pass
+        now = time.perf_counter()
+        dt, self._last_tick = min(0.1, now - self._last_tick), now
+        try:
+            if self.mode == "empty":
+                self._draw_empty(now)
+            elif self.mode == "message":
+                self._draw_ring(now)
+            elif self.mode == "play":
+                self._advance(dt, now)
+        except tk.TclError:
+            pass
         self.root.after(int(1000 / PREVIEW_FPS), self._tick)
 
     def schedule_preview(self):
         if self.preview_job:
             self.root.after_cancel(self.preview_job)
-        self.preview_job = self.root.after(220, self._preview)
+        self.preview_job = self.root.after(180, self._preview)
 
     def _preview(self):
         self.preview_job = None
@@ -975,10 +1259,10 @@ class App:
             try:
                 midi = self._midi(path, preview=True,
                                   on_progress=lambda f: self.events.put(("listen", token, f)))
-                from .render import preview_frames
+                from .render import preview_player
 
-                frames = preview_frames(midi, count=PREVIEW_FRAMES, fps=PREVIEW_FPS, **opts)
-                self.events.put(("preview", token, frames))
+                player = self._prepare(preview_player(midi, fps=PREVIEW_FPS, **opts), w, h)
+                self.events.put(("preview", token, player, path))
             except Exception as exc:
                 self.events.put(("preview_error", token, str(exc)))
 
@@ -1063,6 +1347,7 @@ class App:
             if self.sound.get() == "piano":
                 self.sound.set("mine")
         self._sound_hint()
+        self._midi_row_update()
         self.status.set("")
         self.go.set_enabled(True)
         self.schedule_preview()
@@ -1077,10 +1362,43 @@ class App:
                                                     "This takes a moment the first time."))
         from .transcribe import transcribe
 
-        midi = transcribe(path, on_progress=on_progress,
-                          on_status=lambda s: self.events.put(("stage", s, "")) if preview else None)
-        self.midi_for_input[path] = midi
-        return midi
+        with self._midi_lock:  # the preview and Create Video never listen twice at once
+            if path not in self.midi_for_input:
+                self.midi_for_input[path] = transcribe(
+                    path, on_progress=on_progress,
+                    on_status=lambda s: self.events.put(("stage", s, "")) if preview else None)
+        self.events.put(("heard", path))
+        return self.midi_for_input[path]
+
+    def _midi_row_update(self):
+        """The 'Notes as MIDI' row is only there for a recording that has been listened to."""
+        try:
+            if self.input_path.get() in self.midi_for_input:
+                self.midi_row.pack(fill="x")
+            else:
+                self.midi_row.pack_forget()
+        except (tk.TclError, AttributeError):
+            pass
+
+    def save_midi(self):
+        path = self.input_path.get()
+        midi = self.midi_for_input.get(path)
+        if not midi:
+            return
+        default = os.path.splitext(path)[0] + ".mid"
+        out = filedialog.asksaveasfilename(
+            title="Save the notes as MIDI", defaultextension=".mid",
+            initialdir=os.path.dirname(default), initialfile=os.path.basename(default),
+            filetypes=[("MIDI file", "*.mid")])
+        if not out:
+            return
+        try:
+            shutil.copyfile(midi, out)
+        except OSError as exc:
+            messagebox.showerror("NoteFall", "Couldn't save the MIDI: %s" % exc)
+            return
+        name = os.path.basename(out)
+        self.status.set("Saved " + (name if len(name) < 22 else name[:19] + "…"))
 
     # rendering ------------------------------------------------------------
 
@@ -1238,15 +1556,18 @@ class App:
                 if kind.startswith("update"):
                     self._on_update_event(kind, ev[1])
                 elif kind == "preview" and ev[1] == self.preview_token:
-                    self._show_frames(ev[2])
+                    self._start_player(ev[2], ev[3])
                 elif kind == "preview_error" and ev[1] == self.preview_token:
                     self._stage_message("Can't preview this file", ev[2][:160])
                 elif kind == "listen" and ev[1] == self.preview_token:
                     self._stage_message("Listening… %d%%" % int(ev[2] * 100),
-                                        "Finding every note in your recording.")
+                                        "Finding every note in your recording.",
+                                        progress=ev[2], ring=True)
                 elif kind == "stage":
                     if ev[1]:
-                        self._stage_message(ev[1], ev[2])
+                        self._stage_message(ev[1], ev[2], ring=True)
+                elif kind == "heard":
+                    self._midi_row_update()
                 elif kind == "status":
                     self._set_busy_text(ev[1])
                 elif kind == "progress":
@@ -1258,6 +1579,7 @@ class App:
                     name = os.path.basename(ev[1])
                     self.status.set("Saved " + (name if len(name) < 22 else name[:19] + "…"))
                     self.after_row.pack(side="right")
+                    self.go.flash("Done ✓", P["green"])
                 elif kind == "failed":
                     self._finish()
                     if ev[1] == "cancelled":

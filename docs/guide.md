@@ -38,6 +38,8 @@ When you hold the sustain pedal, a note keeps ringing after you let go of the ke
 
 With a recording, the piano model hears the pedal too, so this works there as well (Basic Pitch can't, so then blocks just follow how long each note sounds).
 
+One honest limit: with the pedal down nobody can hear the exact moment a finger left the key, because the note keeps ringing. So for pedalled notes NoteFall ends the block when that hand plays its next note, which is how you'd play it anyway. Before listening it also corrects a piano that's a little out of tune and evens out the volume. In the app, **Notes as MIDI · Save…** in the Song card keeps what it heard as a MIDI file.
+
 ## The settings in the app
 
 | setting | what it does |

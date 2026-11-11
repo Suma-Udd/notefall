@@ -263,9 +263,45 @@ def decode(out, onset_threshold=0.3, offset_threshold=0.3, frame_threshold=0.1,
     return notes, pedals
 
 
-def transcribe(audio, on_progress=None, on_status=None, onset_threshold=0.3,
-               frame_threshold=0.1):
-    """16 kHz mono float32 audio -> (notes, pedals). Downloads the model if needed."""
+def key_lengths(notes, pedals, reach=12, shortest=0.08, chord=0.04):
+    """Cut pedalled notes back to about how long the key itself was held.
+
+    The model was trained on notes stretched to where the sustain pedal
+    lifts, so with the pedal down every note comes out as long as it rings,
+    not as long as the finger stayed on the key. On real recordings that is
+    3 to 4 times too long. The pedal itself is heard well, so for a note that
+    ends under the pedal we use the next best clue: the hand lets go when it
+    plays its next note. A note is ended at the next onset within `reach`
+    semitones (the same hand), notes struck together within `chord` seconds
+    count as one chord, and nothing gets shorter than `shortest`. Notes
+    played without the pedal keep the length the model heard.
+    """
+    if not pedals:
+        return list(notes)
+    notes = sorted(notes, key=lambda n: (n[0], n[2]))
+    starts = [n[0] for n in notes]
+    downs = np.array([d for d, _ in pedals])
+    ups = np.array([u for _, u in pedals])
+    out = []
+    for s, e, pitch, vel in notes:
+        if np.any((downs - 0.05 <= e) & (e <= ups + 0.15) & (downs < e)):
+            j = int(np.searchsorted(starts, s + chord, side="right"))
+            while j < len(notes) and starts[j] < e:
+                if abs(notes[j][2] - pitch) <= reach:
+                    e = min(e, max(starts[j], s + shortest))
+                    break
+                j += 1
+        out.append((s, e, pitch, vel))
+    return out
+
+
+def transcribe(audio, on_progress=None, on_status=None, onset_threshold=0.4,
+               frame_threshold=0.1, lengths="keys"):
+    """16 kHz mono float32 audio -> (notes, pedals). Downloads the model if needed.
+
+    `lengths="keys"` gives notes as long as the key was held (see key_lengths),
+    "ring" leaves them as long as they sound with the pedal.
+    """
     path = model_path()
     base = 0.0
     if path is None:
@@ -277,7 +313,10 @@ def transcribe(audio, on_progress=None, on_status=None, onset_threshold=0.3,
         on_status("Listening for the notes…")
     out = run_model(audio, path, on_progress=(lambda f: on_progress(base + (1 - base) * f))
                     if on_progress else None)
-    return decode(out, onset_threshold=onset_threshold, frame_threshold=frame_threshold)
+    notes, pedals = decode(out, onset_threshold=onset_threshold, frame_threshold=frame_threshold)
+    if lengths == "keys":
+        notes = key_lengths(notes, pedals)
+    return notes, pedals
 
 
 def info():

@@ -56,6 +56,55 @@ def load_audio(media_path, sr=AUDIO_SAMPLE_RATE):
     return audio
 
 
+def tuning_cents(audio, sr, n=8192, hop=4096, lo=110.0, hi=1100.0):
+    """How many cents the recording sits above (+) or below (-) concert pitch.
+
+    Plenty of pianos, and plenty of uploads, are a fifth of a semitone off.
+    The piano model was only ever shown pianos tuned to A = 440 Hz, and at
+    +25 cents it starts hearing notes that aren't there. This finds the sharp
+    peaks of the spectrum, measures how far each is from the nearest note and
+    takes the (circular) average, weighted by loudness. Returns (cents,
+    confidence 0..1).
+    """
+    if len(audio) < 2 * n:
+        return 0.0, 0.0
+    idx = np.arange(0, len(audio) - n, hop)
+    if len(idx) > 400:
+        idx = idx[np.linspace(0, len(idx) - 1, 400).astype(int)]
+    win = np.hanning(n).astype(np.float32)
+    mag = np.abs(np.fft.rfft(np.stack([audio[i:i + n] for i in idx]) * win, axis=1))
+    k0, k1 = int(lo * n / sr), int(hi * n / sr)
+    m = mag[:, k0 - 1:k1 + 1]
+    mid = m[:, 1:-1]
+    peak = (mid > m[:, :-2]) & (mid >= m[:, 2:]) & (mid > 0.1 * mid.max(axis=1, keepdims=True))
+    r, c = np.nonzero(peak)
+    if len(r) < 50:
+        return 0.0, 0.0
+    a, b, g = (np.log(m[r, c + k] + 1e-12) for k in (0, 1, 2))
+    freq = (c + k0 + 0.5 * (a - g) / (a - 2 * b + g)) * sr / n  # parabola through the peak
+    weight = m[r, c + 1]
+    off = 1200 * np.log2(freq / 440.0) % 100 / 100 * 2 * np.pi
+    z = np.sum(weight * np.exp(1j * off))
+    cents = float(np.angle(z) / (2 * np.pi) * 100)
+    return cents, float(abs(z) / weight.sum())
+
+
+def level(audio, target=0.07, ceiling=0.7):
+    """Bring a recording to about the loudness the piano model is used to.
+
+    A very quiet recording loses its soft notes otherwise. Loud ones are only
+    turned down, never pushed into clipping.
+    """
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
+    if rms < 1e-6:
+        return audio
+    gain = target / rms
+    top = float(np.quantile(np.abs(audio[::7]), 0.999))
+    if top * gain > ceiling:
+        gain = ceiling / top
+    return (audio * gain).astype(np.float32)
+
+
 def _session():
     try:
         import onnxruntime as ort
@@ -260,7 +309,8 @@ def _in_range(notes, lo_hz, hi_hz):
 
 def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
                frame_threshold=None, minimum_note_length=None, minimum_frequency=None,
-               maximum_frequency=None, on_progress=None, on_status=None):
+               maximum_frequency=None, on_progress=None, on_status=None, lengths="keys",
+               retune=True):
     """Listen to a recording and write a MIDI file. Returns the .mid path.
 
     `engine` is "piano" (the piano model), "basic" (Basic Pitch) or "auto"
@@ -268,6 +318,10 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
     Thresholds left as None use each engine's own default. Raise
     `onset_threshold` if you get ghost notes, lower it if soft notes go
     missing. `minimum_note_length` is in milliseconds.
+
+    `lengths="keys"` writes each note as long as the key was held, "ring" as
+    long as it sounds with the pedal (the pedal is written to the MIDI either
+    way). `retune` corrects a piano that isn't tuned to 440 Hz before listening.
     """
     from . import piano
 
@@ -275,10 +329,20 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
     if engine in ("auto", "piano"):
         try:
             audio = load_audio(media_path, sr=piano.SAMPLE_RATE)
+            stretch = 1.0
+            cents, sure = tuning_cents(audio, piano.SAMPLE_RATE)
+            if retune and sure > 0.25 and abs(cents) > 6:
+                # read it again a touch slower or faster, which moves the pitch onto 440
+                stretch = 2 ** (cents / 1200)
+                audio = load_audio(media_path, sr=int(round(piano.SAMPLE_RATE * stretch)))
             notes, pedals = piano.transcribe(
-                audio, on_progress=on_progress, on_status=on_status,
-                onset_threshold=0.3 if onset_threshold is None else onset_threshold,
-                frame_threshold=0.1 if frame_threshold is None else frame_threshold)
+                level(audio), on_progress=on_progress, on_status=on_status,
+                onset_threshold=0.4 if onset_threshold is None else onset_threshold,
+                frame_threshold=0.1 if frame_threshold is None else frame_threshold,
+                lengths=lengths)
+            if stretch != 1.0:
+                notes = [(s / stretch, e / stretch, p, v) for s, e, p, v in notes]
+                pedals = [(d / stretch, u / stretch) for d, u in pedals]
             if minimum_note_length:
                 notes = [n for n in notes if n[1] - n[0] >= minimum_note_length / 1000]
         except media.NotefallError as exc:
