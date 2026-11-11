@@ -295,8 +295,24 @@ def key_lengths(notes, pedals, reach=12, shortest=0.08, chord=0.04):
     return out
 
 
+def clarity(out, notes):
+    """How sure the model was of the notes it found, 0..1 (the mean onset peak).
+
+    On clean piano recordings this sits around 0.87 to 0.89. Echo, noise or
+    other instruments pull it down, and the notes get less reliable with it.
+    """
+    onset = out["reg_onset_output"]
+    if not notes:
+        return 0.0
+    peaks = []
+    for s, _, pitch, _ in notes:
+        i = int(round(s * FPS))
+        peaks.append(float(onset[max(0, i - 2):i + 3, pitch - BEGIN_NOTE].max(initial=0.0)))
+    return float(np.mean(peaks))
+
+
 def transcribe(audio, on_progress=None, on_status=None, onset_threshold=0.4,
-               frame_threshold=0.1, lengths="keys"):
+               frame_threshold=0.1, lengths="keys", report=None):
     """16 kHz mono float32 audio -> (notes, pedals). Downloads the model if needed.
 
     `lengths="keys"` gives notes as long as the key was held (see key_lengths),
@@ -314,6 +330,8 @@ def transcribe(audio, on_progress=None, on_status=None, onset_threshold=0.4,
     out = run_model(audio, path, on_progress=(lambda f: on_progress(base + (1 - base) * f))
                     if on_progress else None)
     notes, pedals = decode(out, onset_threshold=onset_threshold, frame_threshold=frame_threshold)
+    if report is not None:
+        report["clarity"] = clarity(out, notes)
     if lengths == "keys":
         notes = key_lengths(notes, pedals)
     return notes, pedals

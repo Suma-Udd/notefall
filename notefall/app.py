@@ -699,6 +699,7 @@ class App:
         self.cancel = threading.Event()
         self.busy = False
         self.midi_for_input = {}
+        self.heard = {}             # what the listener reported for each recording
         self._midi_lock = threading.Lock()
         self.preview_job = None
         self.preview_token = 0
@@ -1364,9 +1365,11 @@ class App:
 
         with self._midi_lock:  # the preview and Create Video never listen twice at once
             if path not in self.midi_for_input:
+                report = {}
                 self.midi_for_input[path] = transcribe(
-                    path, on_progress=on_progress,
+                    path, on_progress=on_progress, report=report,
                     on_status=lambda s: self.events.put(("stage", s, "")) if preview else None)
+                self.heard[path] = report
         self.events.put(("heard", path))
         return self.midi_for_input[path]
 
@@ -1568,6 +1571,10 @@ class App:
                         self._stage_message(ev[1], ev[2], ring=True)
                 elif kind == "heard":
                     self._midi_row_update()
+                    if ev[1] == self.input_path.get() and ev[1] in self.heard:
+                        from .transcribe import summary
+
+                        self.song_note.configure(text=summary(self.heard[ev[1]]))
                 elif kind == "status":
                     self._set_busy_text(ev[1])
                 elif kind == "progress":

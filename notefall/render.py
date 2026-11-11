@@ -119,10 +119,11 @@ def collect_notes(pm, split=None, sustain="keys"):
                 stretched.append((s, max(e, e2), p, v, h))
                 next_start[p] = s
             notes = stretched[::-1]
-    if by_instrument is None:
-        cut = split if split is not None else keyboard.percentile_split(notes)
-        notes = [(s, e, p, v, p >= cut if split is not None else p > cut)
-                 for (s, e, p, v, _) in notes]
+    if split is not None:
+        notes = [(s, e, p, v, p >= split) for (s, e, p, v, _) in notes]
+    elif by_instrument is None:
+        # one track and no names: follow the hands as they move
+        notes = [(s, e, p, v, h) for (s, e, p, v, _), h in zip(notes, keyboard.hand_split(notes))]
     return notes
 
 

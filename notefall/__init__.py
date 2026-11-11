@@ -1,6 +1,6 @@
 """NoteFall: turn MIDI or a piano recording into a falling notes video."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 __all__ = ["render_video", "transcribe", "synth", "__version__"]
 
