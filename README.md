@@ -54,7 +54,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>🎧 No MIDI? Use a recording</h3>
-      An mp3, a phone recording or a video of someone playing. NoteFall listens with a piano only model, writes down the notes and the pedal, and keeps the real sound.
+      An mp3, a phone recording or a video of someone playing. NoteFall listens with a piano only model, writes down the notes and the pedal, and keeps the real sound. You can save what it heard as a MIDI too.
     </td>
   </tr>
   <tr>
@@ -92,19 +92,40 @@
 
 ## Get it
 
-1. Open the **[download page](https://github.com/Suma-Udd/notefall/releases/latest)** and scroll to **Assets**. Grab the file for your computer:
+<table>
+  <tr>
+    <th width="33%">🪟 Windows</th>
+    <th width="33%">🍎 Mac</th>
+    <th width="33%">🐧 Linux</th>
+  </tr>
+  <tr>
+    <td valign="top">
+      1. Download the <b>Setup.exe</b><br>
+      2. Open it and click <b>Install</b><br>
+      3. Find NoteFall in the Start menu<br>
+      <br>
+      No admin password needed.
+    </td>
+    <td valign="top">
+      1. Download the <b>mac-arm64.dmg</b><br>
+      2. Open it and drag NoteFall onto <b>Applications</b><br>
+      <br>
+      Older Intel Mac? Take the <b>mac-x64.dmg</b> instead. Not sure? Apple menu → <b>About This Mac</b>.
+    </td>
+    <td valign="top">
+      1. Download the <b>linux-x64.tar.gz</b><br>
+      2. Unpack it and open <b>NoteFall</b> inside the folder<br>
+      <br>
+      Or use the one line installer below.
+    </td>
+  </tr>
+</table>
 
-   | your computer | the file to download |
-   | --- | --- |
-   | 🪟 Windows | `NoteFall-…-windows-x64-Setup.exe` |
-   | 🍎 Mac with an Apple chip (M1 and newer) | `NoteFall-…-mac-arm64.dmg` |
-   | 🍎 Older Intel Mac | `NoteFall-…-mac-x64.dmg` |
-   | 🐧 Linux | `NoteFall-…-linux-x64.tar.gz` |
+<p align="center">
+  All the files are on the <b><a href="https://github.com/Suma-Udd/notefall/releases/latest">download page</a></b>, under <b>Assets</b>.
+</p>
 
-   Not sure which Mac you have? Click the Apple menu, then **About This Mac**. If it says **Chip: Apple M…** take arm64, if it says **Processor: Intel** take x64.
-
-2. **Windows:** open the Setup file and click **Install**. No admin password needed, and NoteFall shows up in the Start menu.<br>
-   **Mac:** open the .dmg and drag **NoteFall** onto **Applications**.
+### Good to know
 
 <details>
 <summary><b>My computer says the app might be unsafe</b></summary>
@@ -123,9 +144,9 @@ You only do this once.
 <summary><b>How do updates work?</b></summary>
 <br>
 
-NoteFall checks for a new version when it opens, and you can check any time with the **Check for updates** button under **Create Video**. On Windows one click downloads the new version, installs it and reopens the app. On a Mac it opens the download page so you can grab the new .dmg.
+NoteFall checks for a new version when it opens, and you can check any time with the **Check for updates** button under **Create Video**. On Windows one click downloads the new version, installs it and reopens the app. On Mac and Linux it opens the download page.
 
-If you're on 0.3.0 or older, download the new version by hand once. After that it's automatic.
+On 0.3.0 or older, download the new version by hand once. After that it's automatic.
 
 </details>
 
@@ -151,28 +172,83 @@ curl -LsSf https://raw.githubusercontent.com/Suma-Udd/notefall/main/scripts/inst
 
 ## Make a video
 
-1. Open NoteFall and click **Choose…**. To try it right away, use [`examples/prelude_in_c.mid`](examples/prelude_in_c.mid).
-2. Pick a format and a look. The preview moves as you change things.
-3. Click **Create Video** and pick where to save it.
-4. When it's done, click **Play**. That's it.
+<table>
+  <tr>
+    <td width="25%" valign="top">
+      <h3>🎵 Pick a song</h3>
+      Click <b>Choose…</b> and pick a MIDI or a recording. To try it, use <a href="examples/prelude_in_c.mid">prelude_in_c.mid</a>.
+    </td>
+    <td width="25%" valign="top">
+      <h3>🎨 Make it yours</h3>
+      Pick a format and a look. The preview plays along as you change things.
+    </td>
+    <td width="25%" valign="top">
+      <h3>🎬 Create Video</h3>
+      Pick where to save it and let it render.
+    </td>
+    <td width="25%" valign="top">
+      <h3>▶️ Play it</h3>
+      Click <b>Play</b> to watch it, then post it wherever you like.
+    </td>
+  </tr>
+</table>
 
 > [!TIP]
-> A MIDI file is exact, a recording is a very good guess. For the cleanest result from a recording, use one with just the piano in a quiet room. The **[guide](docs/guide.md)** has more tips.
+> A MIDI file is exact, a recording is a very good guess. For the cleanest result from a recording, use one with just the piano in a quiet room. After listening, **Notes as MIDI · Save…** gives you the notes as a MIDI file too.
 
 ## Learn more
 
-| | |
-| --- | --- |
-| 📖 [Guide](docs/guide.md) | where to find MIDI files, using recordings, the sustain pedal, common questions |
-| ⌨️ [Command line](docs/command-line.md) | every option, and using NoteFall from Python |
-| ⚙️ [How it works](docs/how-it-works.md) | how the video gets drawn, and why it's fast |
-| 🛠️ [Contributing](CONTRIBUTING.md) | run it from source, tests, building the apps |
-| 🗒️ [Changelog](CHANGELOG.md) | what changed in each version |
-
-Found a bug or have an idea? **[Open an issue](https://github.com/Suma-Udd/notefall/issues/new/choose)**, there's a short form for each.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      📖 <b><a href="docs/guide.md">Guide</a></b><br>
+      Where to find MIDI files, using recordings, the sustain pedal, common questions.
+    </td>
+    <td width="50%" valign="top">
+      ⌨️ <b><a href="docs/command-line.md">Command line</a></b><br>
+      Every option, and using NoteFall from Python.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      ⚙️ <b><a href="docs/how-it-works.md">How it works</a></b><br>
+      How the video gets drawn, and why it's fast.
+    </td>
+    <td valign="top">
+      🛠️ <b><a href="CONTRIBUTING.md">Contributing</a></b><br>
+      Run it from source, the tests, building the apps.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      🗒️ <b><a href="CHANGELOG.md">Changelog</a></b><br>
+      What changed in each version.
+    </td>
+    <td valign="top">
+      💬 <b><a href="https://github.com/Suma-Udd/notefall/issues/new/choose">Report a bug or share an idea</a></b><br>
+      There's a short form for each.
+    </td>
+  </tr>
+</table>
 
 ## Credits
 
-Recording to notes uses ByteDance's [piano transcription](https://github.com/bytedance/piano_transcription) model (Kong et al., code MIT, see [`docs/licenses/piano-transcription.md`](docs/licenses/piano-transcription.md)), with [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify (Apache 2.0) as the fallback. Text is set in [Inter](https://rsms.me/inter/) and the Paper look in [Kalam](https://fonts.google.com/specimen/Kalam) (both OFL). MIDI reading by [pretty_midi](https://github.com/craffel/pretty-midi), video by [FFmpeg](https://ffmpeg.org). The Basic Pitch and font licenses live in [`notefall/assets`](notefall/assets).
+NoteFall stands on the shoulders of some great free projects:
 
-NoteFall itself is MIT licensed, see [LICENSE](LICENSE).
+| what | who and license |
+| --- | --- |
+| Listening to recordings | ByteDance's [piano transcription](https://github.com/bytedance/piano_transcription) model by Kong et al., MIT ([notice](docs/licenses/piano-transcription.md)) |
+| Backup listener | [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify, Apache 2.0 |
+| Fonts | [Inter](https://rsms.me/inter/) and [Kalam](https://fonts.google.com/specimen/Kalam), both OFL |
+| Reading MIDI | [pretty_midi](https://github.com/craffel/pretty-midi) |
+| Making the video | [FFmpeg](https://ffmpeg.org) |
+
+<sub>The full Basic Pitch and font licenses are in [`notefall/assets`](notefall/assets).</sub>
+
+<br>
+
+<p align="center">
+  <img src="docs/media/logo.png" width="48" alt=""><br>
+  NoteFall is free and open source under the <a href="LICENSE">MIT license</a>.<br>
+  If it helped you, a ⭐ helps other people find it.
+</p>
