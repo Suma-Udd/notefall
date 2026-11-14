@@ -606,6 +606,7 @@ def render(
     theme_name=theme.DEFAULT_THEME,
     title=None,
     audio=None,
+    audio_end=None,
     progress=True,
     lead_in=None,
     bar_lines=True,
@@ -654,6 +655,8 @@ def render(
 
     # probe the audio before deciding how long the video is
     audio_len = media.duration(audio) if audio else 0.0
+    if audio and audio_end:
+        audio_len = min(audio_len, float(audio_end))   # stop the sound here (an end jingle follows)
 
     r = make_renderer(notes, width, height, fps, lookahead, pal, title, progress, [],
                       particles, 1.0, pedal=pedal, hands=hands)
@@ -675,6 +678,9 @@ def render(
     if audio:
         cmd += ["-i", audio, "-map", "0:v:0", "-map", "1:a:0"]
         filters = []
+        if audio_end:
+            filters.append("atrim=end=%.3f" % audio_len)
+            filters.append("afade=t=out:st=%.3f:d=0.200" % max(0.0, audio_len - 0.2))
         if lead_in > 0:
             filters.append("adelay=%d:all=1" % int(round(lead_in * 1000)))
         filters.append("apad")

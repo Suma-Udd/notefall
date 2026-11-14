@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- **Clips saved from TikTok no longer get junk notes at the end.** The logo jingle that TikTok adds to a saved video was being written down as a little run of notes. NoteFall now spots it (very short, pure beeps right at the end, which a piano can't make) and leaves it out of the notes, the MIDI and the video's sound, so the video ends when the music does.
+
 ## 0.6.1
 
 - **The hands are told apart properly in recordings.** A recording doesn't say which hand played a note, so everything above one fixed pitch used to be painted as the right hand, which is wrong whenever a hand wanders. The split point now moves with the music: it follows the gap between the hands and never asks one hand to stretch further than a hand can. Checked on 311 classical pieces where the hands are written out, wrong hand notes went from 17% to 8%. The same goes for any MIDI with a single track.

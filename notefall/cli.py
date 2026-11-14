@@ -119,6 +119,7 @@ def run(args, log=print, on_progress=None, cancel=None):
         raise media.NotefallError("can't find the audio file %s" % audio)
     is_midi = ext in MIDI_EXT
     bar_lines = not args.no_bar_lines
+    audio_end = None
 
     if is_midi:
         midi_path = args.input
@@ -149,6 +150,7 @@ def run(args, log=print, on_progress=None, cancel=None):
             log("Saved the notes as %s" % midi_path)
         if not audio:
             audio = args.input
+            audio_end = heard.get("music_end")
         # a transcription has no real tempo, so bar lines would be made up
         bar_lines = False
 
@@ -167,6 +169,7 @@ def run(args, log=print, on_progress=None, cancel=None):
         theme_name=args.theme,
         title=args.title,
         audio=audio,
+        audio_end=audio_end,
         progress=not args.no_progress,
         lead_in=args.lead_in,
         bar_lines=bar_lines,

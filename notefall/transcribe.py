@@ -105,6 +105,48 @@ def level(audio, target=0.07, ceiling=0.7):
     return (audio * gain).astype(np.float32)
 
 
+def _tone_purity(audio, sr, start, pitch, n=2048):
+    """How much louder a note's fundamental is than its octave. A piano string
+    always carries a clear octave above the note, a synth beep often has none."""
+    i = int(start * sr)
+    chunk = audio[i:i + n]
+    if len(chunk) < n // 2:
+        return 0.0
+    mag = np.abs(np.fft.rfft(chunk * np.hanning(len(chunk)), n * 2))
+    freqs = np.fft.rfftfreq(n * 2, 1 / sr)
+    f0 = 440.0 * 2 ** ((pitch - 69) / 12)
+
+    def band(f):
+        lo, hi = np.searchsorted(freqs, f * 0.96), np.searchsorted(freqs, f * 1.04) + 1
+        return float(mag[lo:hi].max()) if hi > lo else 0.0
+
+    return band(f0) / (band(2 * f0) + 1e-9)
+
+
+def drop_end_jingle(audio, sr, notes, pedals=(), last=1.0, pure=40.0, top=76):
+    """Take off the little synth jingle that video apps stick on the end.
+
+    A clip saved from TikTok ends with its logo sound, a quick run of beeps,
+    and the listener writes those down as notes. They give themselves away:
+    right at the end, very short, and pure tones with no octave above them,
+    which a piano doesn't make in the middle of the keyboard (its top notes
+    can sound that pure, so those don't count). If at least two such notes
+    are found in the last second, everything from just before the first one
+    is cut. Returns (notes, pedals, where the music ends or None).
+    """
+    if not notes:
+        return list(notes), list(pedals), None
+    end = max(n[0] for n in notes)   # there is often silence after it, so count from the last note
+    beeps = [n[0] for n in notes
+             if n[0] > end - last and n[1] - n[0] < 0.2 and n[2] <= top
+             and _tone_purity(audio, sr, n[0], n[2]) > pure]
+    if len(beeps) < 2:
+        return list(notes), list(pedals), None
+    cut = min(beeps) - 0.5
+    return ([n for n in notes if n[0] < cut],
+            [(d, min(u, cut)) for d, u in pedals if d < cut], cut)
+
+
 def _session():
     try:
         import onnxruntime as ort
@@ -338,13 +380,14 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
     way). `retune` corrects a piano that isn't tuned to 440 Hz before listening.
 
     Pass a dict as `report` to learn what happened: "engine", "notes", "tuning"
-    (cents that were corrected, 0 if none) and "clarity" (how sure the piano
-    model was, see piano.clarity and `hard_to_hear`).
+    (cents that were corrected, 0 if none), "clarity" (how sure the piano
+    model was, see piano.clarity and `hard_to_hear`) and "music_end" (seconds,
+    set when an app's end jingle was cut off, see drop_end_jingle).
     """
     from . import piano
 
     info = report if report is not None else {}
-    info.update(engine="basic", tuning=0.0, clarity=None)
+    info.update(engine="basic", tuning=0.0, clarity=None, music_end=None)
     notes = pedals = None
     if engine in ("auto", "piano"):
         try:
@@ -361,6 +404,9 @@ def transcribe(media_path, midi_out=None, engine="auto", onset_threshold=None,
                 frame_threshold=0.1 if frame_threshold is None else frame_threshold,
                 lengths=lengths, report=info)
             info.update(engine="piano", tuning=cents if stretch != 1.0 else 0.0)
+            notes, pedals, music_end = drop_end_jingle(audio, piano.SAMPLE_RATE, notes, pedals)
+            if music_end is not None:
+                info["music_end"] = music_end / stretch
             if stretch != 1.0:
                 notes = [(s / stretch, e / stretch, p, v) for s, e, p, v in notes]
                 pedals = [(d / stretch, u / stretch) for d, u in pedals]
@@ -402,6 +448,8 @@ def summary(report):
     if abs(report.get("tuning") or 0) >= 1:
         text += ", piano tuned %d cents %s (corrected)" % (
             abs(round(report["tuning"])), "sharp" if report["tuning"] > 0 else "flat")
+    if report.get("music_end"):
+        text += ", end jingle removed"
     if hard_to_hear(report):
         return text + ". This one is hard to hear clearly (echo, noise or other instruments), " \
                       "so expect more wrong notes than usual."

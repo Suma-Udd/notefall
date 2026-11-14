@@ -1449,8 +1449,9 @@ class App:
                 base = 0.0 if is_midi else 0.3
                 self.events.put(("status", "Drawing every frame…"))
                 w, h = render.FORMATS[fmt]
-                render.render(midi, out, width=w, height=h, audio=audio, bar_lines=is_midi,
-                              cancel=self.cancel,
+                cut = self.heard.get(path, {}).get("music_end") if audio == path else None
+                render.render(midi, out, width=w, height=h, audio=audio, audio_end=cut,
+                              bar_lines=is_midi, cancel=self.cancel,
                               on_progress=lambda f: self.events.put(("progress", base + f * (1 - base))),
                               **opts)
                 self.events.put(("done", out))

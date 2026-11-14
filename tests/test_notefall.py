@@ -421,6 +421,32 @@ def test_recording_midi_has_two_hand_tracks(tmp_path):
     assert hands == {72: True, 43: False}
 
 
+def test_end_jingle_is_dropped_but_a_piano_ending_is_not():
+    import numpy as np
+
+    sr = 16000
+    clock = np.arange(sr * 4) / sr
+
+    def tone(freq, start, length, harmonics):
+        on = (clock >= start) & (clock < start + length)
+        return sum(a * np.sin(2 * np.pi * freq * h * clock) for h, a in harmonics) * on
+
+    rich = ((1, 1.0), (2, 0.6), (3, 0.4))     # like a string
+    beep = ((1, 1.0),)                         # like a synth
+    song = [(0.5, 1.5, 60, 80), (1.5, 2.5, 64, 80)]
+    body = tone(261.63, 0.5, 1.0, rich) + tone(329.63, 1.5, 1.0, rich)
+    jingle = [(2.8, 2.87, 68, 70), (2.9, 2.97, 71, 90), (3.0, 3.07, 75, 90)]
+    beeps = sum(tone(440 * 2 ** ((p - 69) / 12), s, 0.15, beep) for s, _, p, _ in jingle)
+    audio = (body + beeps).astype(np.float32) * 0.2
+    notes, pedals, end = transcribe.drop_end_jingle(audio, sr, song + jingle,
+                                                    [(0.4, 2.6), (2.75, 3.1)])
+    assert notes == song and pedals == [(0.4, 2.3)] and abs(end - 2.3) < 1e-6
+    # the same three quick notes played on strings are a real ending
+    strings = sum(tone(440 * 2 ** ((p - 69) / 12), s, 0.15, rich) for s, _, p, _ in jingle)
+    audio = (body + strings).astype(np.float32) * 0.2
+    assert transcribe.drop_end_jingle(audio, sr, song + jingle) == (song + jingle, [], None)
+
+
 def test_listening_summary():
     assert transcribe.summary({"notes": 12, "tuning": 0.0, "clarity": 0.88, "engine": "piano"}) \
         == "Heard 12 notes."
