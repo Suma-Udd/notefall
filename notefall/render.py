@@ -583,6 +583,11 @@ def _worker_frame(t):
 def make_renderer(notes, width, height, fps, lookahead, pal, title, progress, downbeats,
                   particles, duration, pedal=(), hands=True):
     """The right Renderer for the theme: the glowing default or the Paper look."""
+    from .looks import LOOKS
+
+    if pal.get("style") in LOOKS:
+        return LOOKS[pal["style"]](notes, width, height, fps, lookahead, pal, title, progress,
+                                   downbeats, particles, duration, pedal=pedal, hands=hands)
     if pal.get("style") == "paper":
         from .paper import PaperRenderer
 

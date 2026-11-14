@@ -340,7 +340,7 @@ class HandsMixin:
         draw_set(_Small(sd), 0, 255, shift)
         shadow = shadow.filter(ImageFilter.GaussianBlur(ww * S / sh_s * 0.22))
         shadow = shadow.resize((bw, bh), Image.BILINEAR).point(lambda v: int(v * 0.32))
-        dark = Image.new("RGB", (bw, bh), (70, 50, 40))
+        dark = Image.new("RGB", (bw, bh), self.pal.get("hand_shadow", (70, 50, 40)))
         img.paste(dark, (bx0, by0), shadow)
 
         # outline mask (a bit bigger) and fill mask, so the outline goes round the whole hand
@@ -351,6 +351,8 @@ class HandsMixin:
         draw_set(ImageDraw.Draw(inner), 0, 255)
 
         skin = self._skin(bw * S, bh * S, (c - bx0) * S, (ky - by0) * S, sc * S, dirn)
+        SKIN_LINE = self.pal.get("skin_line", globals()["SKIN_LINE"])
+        NAIL = self.pal.get("nail", globals()["NAIL"])
         layer = Image.new("RGBA", (bw * S, bh * S), SKIN_LINE + (0,))
         layer.putalpha(outer)
         layer.paste(skin, (0, 0), inner)
@@ -399,7 +401,8 @@ class HandsMixin:
             xs = (np.arange(bw, dtype=np.float32)[None, :] - ox) / (ww * 4.5) * dirn
             yy = (np.arange(bh, dtype=np.float32)[:, None] - oy) / (ww * 4.0)
             f = np.clip(0.35 + 0.35 * xs + 0.35 * yy, 0, 1)[..., None]
-            rgb = np.array(SKIN, np.float32) * (1 - f) + np.array(SKIN_SHADE, np.float32) * f
+            rgb = (np.array(self.pal.get("skin", SKIN), np.float32) * (1 - f)
+                   + np.array(self.pal.get("skin_shade", SKIN_SHADE), np.float32) * f)
             big = (Image.fromarray(rgb.astype(np.uint8)).convert("RGBA"), ox, oy)
             self._skin_cache[key] = big
         img, ox, oy = big

@@ -153,7 +153,7 @@ def tiny_midi(tmp_path):
 def test_every_theme_has_every_colour():
     keys = set(theme.get("default"))
     for name in theme.THEMES:
-        assert set(theme.get(name)) == keys
+        assert keys <= set(theme.get(name))
     with pytest.raises(media.NotefallError):
         theme.get("nope")
 
@@ -186,11 +186,15 @@ def test_chord_timeline_ignores_flickers():
     assert chords.at(line, -1) == -1 and chords.at(line, 0.5) == 0
 
 
-def test_paper_frames_in_every_format():
+HAND_MADE = ["paper", "watercolour", "washi", "riso", "moonlit"]
+
+
+@pytest.mark.parametrize("look", HAND_MADE)
+def test_hand_made_frames_in_every_format(look):
     pm = _pedal_midi()
     for with_hands in (True, False):
         for w, h in render.FORMATS.values():
-            img = render.preview(pm, width=w // 4, height=h // 4, theme_name="paper", title="hi",
+            img = render.preview(pm, width=w // 4, height=h // 4, theme_name=look, title="hi",
                                  hands=with_hands)
             assert img.size == (w // 4 // 2 * 2, h // 4 // 2 * 2)
 
@@ -213,10 +217,11 @@ def test_hands_press_the_right_keys():
     assert sum(len(f) for f in hands.HandPlan(notes, geo, ww, False, 0, 1000).fingers) == 1
 
 
-def test_paper_frames_are_the_same_in_any_order():
+@pytest.mark.parametrize("look", HAND_MADE)
+def test_hand_made_frames_are_the_same_in_any_order(look):
     pm = _pedal_midi()
     notes = render.collect_notes(pm)
-    r = render.make_renderer(notes, 270, 480, 30, None, theme.get("paper"), None, True, [], True, 3.0)
+    r = render.make_renderer(notes, 270, 480, 30, None, theme.get(look), None, True, [], True, 3.0)
     a = r.frame(1.0).tobytes()
     r.frame(2.5)
     assert r.frame(1.0).tobytes() == a

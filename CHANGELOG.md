@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- **Four new hand made looks**, all with the hands playing at the bottom:
+  - **Watercolour**: soft paint washes on textured cream paper, darker where the paint dried.
+  - **Journal**: a dot grid notebook page with the notes as washi tape (stripes for the right hand, polka dots for the left) and a little name sticker on each.
+  - **Riso print**: grainy pink and blue ink like a risograph print, with halftone dots and a halftone sun.
+  - **Moonlit**: gold and periwinkle notes under a night sky with a moon and stars.
+- **Pick a look by its picture.** The row of colour dots in the app is now a grid of little previews, one per look, and hovering one shows its name.
+
 ## 0.6.2
 
 - **Clips saved from TikTok no longer get junk notes at the end.** The logo jingle that TikTok adds to a saved video was being written down as a little run of notes. NoteFall now spots it (very short, pure beeps right at the end, which a piano can't make) and leaves it out of the notes, the MIDI and the video's sound, so the video ends when the music does.

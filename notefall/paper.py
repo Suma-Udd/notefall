@@ -43,6 +43,13 @@ class PaperRenderer(R.Renderer):
 
     def __init__(self, *args, hands=True, **kw):
         super().__init__(*args, **kw)
+        pal = self.pal
+        self.c_paper = pal.get("paper", PAPER)
+        self.c_edge = pal.get("paper_edge", PAPER_EDGE)
+        self.c_ink = pal.get("ink", INK)
+        self.c_pencil = pal.get("pencil", PENCIL)
+        self.c_key_white = pal.get("key_white", KEY_WHITE)
+        self.c_key_black = pal.get("key_black", KEY_BLACK)
         W, H, ww = self.W, self.H, self.ww
         portrait = H > W * 1.2
         self.white_h = int(min(H * (0.2 if portrait else 0.17), max(H * 0.1, ww * 4.2)))
@@ -87,7 +94,7 @@ class PaperRenderer(R.Renderer):
         # soft vignette towards the edges, like light falling on a page
         dx, dy = (xx / W - 0.5) * 2, (yy / H - 0.45) * 2
         v = np.clip((dx * dx * 0.6 + dy * dy * 0.5), 0, 1)[..., None]
-        base = np.array(PAPER, np.float32) * (1 - v * 0.6) + np.array(PAPER_EDGE, np.float32) * v * 0.6
+        base = np.array(self.c_paper, np.float32) * (1 - v * 0.6) + np.array(self.c_edge, np.float32) * v * 0.6
         # paper grain at two scales
         fine = rng.normal(0, 1, (H, W)).astype(np.float32)
         coarse = np.asarray(Image.fromarray(
@@ -102,7 +109,7 @@ class PaperRenderer(R.Renderer):
                 x = int(self.geo[pitch][0])
                 a = 46 if pitch % 12 == 0 else 26
                 for y in range(0, self.kb_top, 14):
-                    d.line([x, y, x, min(self.kb_top, y + 7)], fill=PENCIL + (a,), width=1)
+                    d.line([x, y, x, min(self.kb_top, y + 7)], fill=self.c_pencil + (a,), width=1)
         self.paper = bg
         self.paper_arr = np.asarray(bg, np.float32)
         self._draw_paper_keys()
@@ -130,14 +137,14 @@ class PaperRenderer(R.Renderer):
         # white keys: paper white, pencil outlines, labels at the bottom
         for pitch in self.whites:
             x0, x1, _ = self.geo[pitch]
-            d.rectangle([x0 * SS, 0, x1 * SS, wh], fill=KEY_WHITE)
+            d.rectangle([x0 * SS, 0, x1 * SS, wh], fill=self.c_key_white)
         for pitch in self.whites:
             x0, x1, _ = self.geo[pitch]
-            self._wobbly(d, [(x0 * SS, 0), (x0 * SS, wh)], rng, lw, INK + (230,), SS * 0.5)
+            self._wobbly(d, [(x0 * SS, 0), (x0 * SS, wh)], rng, lw, self.c_ink + (230,), SS * 0.5)
         x_end = self.geo[self.whites[-1]][1] * SS
         x_beg = self.geo[self.whites[0]][0] * SS
-        self._wobbly(d, [(x_end, 0), (x_end, wh)], rng, lw, INK + (230,), SS * 0.5)
-        self._wobbly(d, [(x_beg, wh), (x_end, wh)], rng, lw, INK + (230,), SS * 0.6)
+        self._wobbly(d, [(x_end, 0), (x_end, wh)], rng, lw, self.c_ink + (230,), SS * 0.5)
+        self._wobbly(d, [(x_beg, wh), (x_end, wh)], rng, lw, self.c_ink + (230,), SS * 0.6)
         # a thin shadow line under the keys
         d.rectangle([x_beg, wh + lw, x_end, wh + lw * 3], fill=(0, 0, 0, 22))
         self.kb_white = big.resize((W, kb_h), Image.LANCZOS)
@@ -150,8 +157,8 @@ class PaperRenderer(R.Renderer):
             if not is_black:
                 continue
             r = (x1 - x0) * SS * 0.14
-            bd.rounded_rectangle([x0 * SS, -r, x1 * SS, bh], radius=r, fill=KEY_BLACK + (255,),
-                                 outline=INK + (255,), width=lw)
+            bd.rounded_rectangle([x0 * SS, -r, x1 * SS, bh], radius=r, fill=self.c_key_black + (255,),
+                                 outline=self.c_ink + (255,), width=lw)
             # a sketched highlight stroke down the key
             hx = _lerp(x0, x1, 0.28) * SS
             self._wobbly(bd, [(hx, bh * 0.08), (hx, bh * 0.8)], rng, max(1, lw // 2),
@@ -159,7 +166,7 @@ class PaperRenderer(R.Renderer):
         self.kb_black = black.resize((W, kb_h), Image.LANCZOS)
         # the line the notes land on
         top = ImageDraw.Draw(self.kb_black)
-        top.line([0, 0, W, 0], fill=INK + (255,), width=max(2, int(ww * 0.05)))
+        top.line([0, 0, W, 0], fill=self.c_ink + (255,), width=max(2, int(ww * 0.05)))
         self._tints = {}
 
     def _labels(self, d):
@@ -171,7 +178,7 @@ class PaperRenderer(R.Renderer):
                 label = note_label(pitch)
                 tw = d.textlength(label, font=self.f_key)
             y = self.white_h - self.f_key.size * 1.35
-            d.text(((x0 + x1 - tw) / 2, y), label, font=self.f_key, fill=INK + (200,))
+            d.text(((x0 + x1 - tw) / 2, y), label, font=self.f_key, fill=self.c_ink + (200,))
 
     def _colour(self, right, playing):
         pal = self.pal
@@ -251,15 +258,15 @@ class PaperRenderer(R.Renderer):
         img.paste(fill, (0, 0), mask)
         d = ImageDraw.Draw(img)
         lw = max(2, int(w * 0.075 * SS))
-        d.line(outline + [outline[0]], fill=INK + (255,), width=lw, joint="curve")
+        d.line(outline + [outline[0]], fill=self.c_ink + (255,), width=lw, joint="curve")
         # a second, lighter pass, the way a pencil never quite lands on the same line
-        d.line(wob(pts, 2) + [outline[0]], fill=INK + (90,), width=max(1, lw // 2), joint="curve")
+        d.line(wob(pts, 2) + [outline[0]], fill=self.c_ink + (90,), width=max(1, lw // 2), joint="curve")
 
         font = self.f_label_b if black else self.f_label
         label = note_label(p)
         tw = d.textlength(label, font=font)
         if h * SS > font.size * 1.25 and tw < w * SS * 1.05:
-            d.text(((Wc - tw) / 2, y1 - font.size * 1.22), label, font=font, fill=INK + (235,))
+            d.text(((Wc - tw) / 2, y1 - font.size * 1.22), label, font=font, fill=self.c_ink + (235,))
 
         sprite = img.resize((w + 2 * pad, h + 2 * pad), Image.LANCZOS)
         got = (sprite, pad, w)
@@ -278,7 +285,7 @@ class PaperRenderer(R.Renderer):
             y = kb_top - (b - t) * pps
             if 0 <= y < kb_top:
                 for x in range(0, W, 18):
-                    d.line([x, y, x + 9, y], fill=PENCIL + (70,), width=1)
+                    d.line([x, y, x + 9, y], fill=self.c_pencil + (70,), width=1)
 
         visible = np.nonzero((self.starts <= t + self.lookahead) & (self.ends >= t - 0.02))[0]
         keep = set()
@@ -302,18 +309,7 @@ class PaperRenderer(R.Renderer):
         for k in [k for k in self._notes_cache if k not in keep]:
             del self._notes_cache[k]
 
-        # little pencil strokes where a note lands
-        for cx, w, age, vel in marks:
-            f = age / 0.3
-            a = int(200 * (1 - f))
-            ln = ww * (0.25 + 0.35 * ease_out(f)) * (0.7 + 0.5 * vel / 127)
-            for k, ang in enumerate((-150, -125, -55, -30)):
-                ra = math.radians(ang)
-                r0 = w * 0.55 + ww * 0.15 * ease_out(f)
-                sx = cx + math.cos(ra) * r0
-                sy = kb_top + math.sin(ra) * r0 * 0.7
-                d.line([sx, sy, sx + math.cos(ra) * ln * 0.5, sy + math.sin(ra) * ln * 0.5],
-                       fill=INK + (a,), width=max(1, int(ww * 0.04)))
+        self._draw_marks(img, d, marks)
 
         # keyboard
         kb = self.kb_white.copy()
@@ -342,12 +338,11 @@ class PaperRenderer(R.Renderer):
         if self.pedal:
             self._draw_pedal(d, t)
         if self.title:
-            tx, ty = int(min(W, H) * 0.055), int(min(W, H) * 0.045)
-            d.text((tx, ty), self.title, font=self.f_title, fill=INK)
+            self._draw_title(d)
         if self.progress:
             y = H - self.bar_h
-            d.rectangle([0, y, W, H], fill=PAPER_EDGE)
-            d.rectangle([0, y, int(W * min(1.0, t / self.duration)), H], fill=INK)
+            d.rectangle([0, y, W, H], fill=self.c_edge)
+            d.rectangle([0, y, int(W * min(1.0, t / self.duration)), H], fill=self.c_ink)
 
         fade = min(1.0, t / R.FADE_IN, (self.duration - t) / R.FADE_OUT)
         if fade < 1.0:
@@ -355,6 +350,26 @@ class PaperRenderer(R.Renderer):
             arr = np.asarray(img, np.float32) * f + self.paper_arr * (1 - f)
             img = Image.fromarray(arr.astype(np.uint8))
         return img
+
+    def _draw_marks(self, img, d, marks):
+        """Little pencil strokes where a note lands."""
+        ww, kb_top = self.ww, self.kb_top
+        for cx, w, age, vel in marks:
+            f = age / 0.3
+            a = int(200 * (1 - f))
+            ln = ww * (0.25 + 0.35 * ease_out(f)) * (0.7 + 0.5 * vel / 127)
+            for k, ang in enumerate((-150, -125, -55, -30)):
+                ra = math.radians(ang)
+                r0 = w * 0.55 + ww * 0.15 * ease_out(f)
+                sx = cx + math.cos(ra) * r0
+                sy = kb_top + math.sin(ra) * r0 * 0.7
+                d.line([sx, sy, sx + math.cos(ra) * ln * 0.5, sy + math.sin(ra) * ln * 0.5],
+                       fill=self.c_ink + (a,), width=max(1, int(ww * 0.04)))
+
+
+    def _draw_title(self, d):
+        tx, ty = int(min(self.W, self.H) * 0.055), int(min(self.W, self.H) * 0.045)
+        d.text((tx, ty), self.title, font=self.f_title, fill=self.c_ink)
 
     def _draw_chord(self, d, t):
         line = self.chords
@@ -368,8 +383,8 @@ class PaperRenderer(R.Renderer):
         g = ease_out(age / 0.25)
         dy = (1 - g) * self.f_chord.size * 0.35
         name = line[k][1].replace("b5", "♭5") if False else line[k][1]
-        d.text((x, y + dy), name, font=self.f_chord, fill=INK + (int(255 * g),),
-               stroke_width=max(2, self.f_chord.size // 14), stroke_fill=PAPER + (int(220 * g),))
+        d.text((x, y + dy), name, font=self.f_chord, fill=self.c_ink + (int(255 * g),),
+               stroke_width=max(2, self.f_chord.size // 14), stroke_fill=self.c_paper + (int(220 * g),))
         if k + 1 < len(line):
             nxt_t, nxt = line[k + 1]
             soon = nxt_t - t
@@ -380,11 +395,11 @@ class PaperRenderer(R.Renderer):
                 ay = y + self.f_chord.size * 0.62
                 al = self.f_next.size * 1.0
                 lw = max(2, self.f_next.size // 12)
-                d.line([ax, ay, ax + al, ay], fill=PENCIL + (a,), width=lw)
+                d.line([ax, ay, ax + al, ay], fill=self.c_pencil + (a,), width=lw)
                 d.line([ax + al * 0.62, ay - al * 0.3, ax + al, ay, ax + al * 0.62, ay + al * 0.3],
-                       fill=PENCIL + (a,), width=lw, joint="curve")
+                       fill=self.c_pencil + (a,), width=lw, joint="curve")
                 d.text((ax + al * 1.35, ay - self.f_next.size * 0.72), nxt, font=self.f_next,
-                       fill=PENCIL + (a,))
+                       fill=self.c_pencil + (a,))
 
     def _draw_pedal(self, d, t):
         down = any(a <= t < b for a, b in self.pedal)
@@ -393,8 +408,8 @@ class PaperRenderer(R.Renderer):
         tw = d.textlength(label, font=f)
         x = self.W - min(self.W, self.H) * 0.055 - tw
         y = min(self.W, self.H) * 0.05
-        d.text((x, y), label, font=f, fill=INK + ((235,) if down else (90,)))
+        d.text((x, y), label, font=f, fill=self.c_ink + ((235,) if down else (90,)))
         if down:
             uy = y + f.size * 1.25
-            d.line([x, uy, x + tw * 0.5, uy + 2, x + tw, uy - 1], fill=INK + (200,),
+            d.line([x, uy, x + tw * 0.5, uy + 2, x + tw, uy - 1], fill=self.c_ink + (200,),
                    width=max(2, f.size // 12), joint="curve")
