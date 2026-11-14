@@ -44,6 +44,11 @@
 
 <p align="center"><sub>Bach's Prelude in C, straight out of NoteFall. Nothing edited by hand.</sub></p>
 
+<p align="center">
+  <img src="docs/media/looks.jpg" width="760" alt="The Watercolour, Journal, Riso print and Moonlit looks"><br>
+  <sub>The newer hand made looks: <b>Watercolour</b>, <b>Journal</b>, <b>Riso print</b> and <b>Moonlit</b>.</sub>
+</p>
+
 ## What it does
 
 <table>
@@ -69,8 +74,8 @@
   </tr>
   <tr>
     <td valign="top">
-      <h3>🎨 Six looks</h3>
-      Glowing notes on a dark stage in five colour sets, or <b>Paper</b>: a sketchbook page with every key and note named and the chord on screen. No sheet music needed.
+      <h3>🎨 Ten looks</h3>
+      Five hand made pages (<b>Paper</b>, <b>Watercolour</b>, <b>Journal</b>, <b>Riso print</b> and <b>Moonlit</b>) with every key and note named and the chord on screen, or glowing notes on a dark stage in five colour sets. Pick one from the little pictures in the app.
     </td>
     <td valign="top">
       <h3>🔄 Updates itself</h3>
@@ -239,7 +244,7 @@ NoteFall stands on the shoulders of some great free projects:
 | --- | --- |
 | Listening to recordings | ByteDance's [piano transcription](https://github.com/bytedance/piano_transcription) model by Kong et al., MIT ([notice](docs/licenses/piano-transcription.md)) |
 | Backup listener | [Basic Pitch](https://github.com/spotify/basic-pitch) by Spotify, Apache 2.0 |
-| Fonts | [Inter](https://rsms.me/inter/) and [Kalam](https://fonts.google.com/specimen/Kalam), both OFL |
+| Fonts | [Inter](https://rsms.me/inter/), [Kalam](https://fonts.google.com/specimen/Kalam), [Caveat](https://fonts.google.com/specimen/Caveat), [DM Serif Display](https://fonts.google.com/specimen/DM+Serif+Display), [Patrick Hand](https://fonts.google.com/specimen/Patrick+Hand), [Nunito](https://fonts.google.com/specimen/Nunito) and [Fredoka](https://fonts.google.com/specimen/Fredoka), all OFL |
 | Reading MIDI | [pretty_midi](https://github.com/craffel/pretty-midi) |
 | Making the video | [FFmpeg](https://ffmpeg.org) |
 

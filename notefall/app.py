@@ -471,51 +471,101 @@ class Toggle(Canvas):
         self.coords(self.knob, x - 2 * self.sh, 2 - 2 * self.sh)
 
 
-class Swatches(Canvas):
-    """One dot per look: left hand colour on the left half, right hand on the right."""
+class LookPicker(Canvas):
+    """A grid of little pictures, one per look, with a ring that glides to the one picked."""
 
-    def __init__(self, parent, variable, width, bg=None):
+    COLS = 5
+    LOOKS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "looks")
+
+    def __init__(self, parent, variable, width, bg=None, on_hover=None):
         bg = bg or P["card"]
         keys = list(theme.THEMES)
-        self.D = px(26)
-        self.GAP = max(px(8), int((width - 8 - len(keys) * self.D) / max(1, len(keys) - 1)))
-        self.GAP = min(self.GAP, px(16))
-        w = len(keys) * self.D + (len(keys) - 1) * self.GAP + 8
-        super().__init__(parent, w, self.D + 8, bg=bg, cursor="hand2")
-        self.keys, self.var = keys, variable
+        self.keys, self.var, self.on_hover = keys, variable, on_hover
+        self.GAP = px(8)
+        self.M = px(4)  # room for the ring
+        self.TW = int((width - 2 * self.M - (self.COLS - 1) * self.GAP) / self.COLS)
+        self.TH = int(self.TW * 1.4)
+        rows = (len(keys) + self.COLS - 1) // self.COLS
+        h = rows * self.TH + (rows - 1) * self.GAP + 2 * self.M
+        super().__init__(parent, width, h, bg=bg, cursor="hand2")
+        self.R = max(px(6), self.TW // 6)
         for i, key in enumerate(keys):
-            x = 4 + i * (self.D + self.GAP)
-            self.create_image(x, 4, anchor="nw", image=self.keep(key, self._dot(theme.get(key), bg)))
-        # one ring that slides to whichever look is picked
-        self.ring = self.create_image(self._ring_x(), 0, anchor="nw",
+            x, y = self._pos(i)
+            self.create_image(x, y, anchor="nw", image=self.keep(key, self._tile(key, bg)))
+        i = self._index()
+        x, y = self._pos(i)
+        self.ring = self.create_image(x - self.M, y - self.M, anchor="nw",
                                       image=self.keep("ring", self._ring()))
-        self.slide = Tween(self, lambda x: self.coords(self.ring, x, 0), self._ring_x(), ms=260)
+        self.sx = Tween(self, lambda v: self._move(), x, ms=280)
+        self.sy = Tween(self, lambda v: self._move(), y, ms=280)
         self.bind("<ButtonRelease-1>", self._click)
-        self.trace(variable, lambda: self.slide.to(self._ring_x()))
+        self.bind("<Motion>", self._hover)
+        self.bind("<Leave>", lambda e: on_hover and on_hover(None))
+        self.trace(variable, self._picked)
 
-    def _ring_x(self):
-        i = self.keys.index(self.var.get()) if self.var.get() in self.keys else 0
-        return i * (self.D + self.GAP)
+    def _pos(self, i):
+        r, c = divmod(i, self.COLS)
+        return self.M + c * (self.TW + self.GAP), self.M + r * (self.TH + self.GAP)
 
-    def _dot(self, pal, bg):
-        d = self.D * SS
-        img = Image.new("RGBA", (d, d), _rgb(bg) + (255,))
-        dr = ImageDraw.Draw(img)
-        dr.pieslice([0, 0, d - 1, d - 1], 90, 270, fill=pal["left"])
-        dr.pieslice([0, 0, d - 1, d - 1], 270, 90, fill=pal["right"])
-        dr.ellipse([0, 0, d - 1, d - 1], outline=(0, 0, 0, 30), width=SS)
-        return img.resize((self.D, self.D), Image.LANCZOS)
+    def _index(self):
+        return self.keys.index(self.var.get()) if self.var.get() in self.keys else 0
+
+    def _move(self):
+        self.coords(self.ring, self.sx.value - self.M, self.sy.value - self.M)
+
+    def _picked(self):
+        x, y = self._pos(self._index())
+        self.sx.to(x)
+        self.sy.to(y)
+
+    def _tile(self, key, bg):
+        w, h, r = self.TW * SS, self.TH * SS, self.R * SS
+        try:
+            pic = Image.open(os.path.join(self.LOOKS, key + ".png")).convert("RGB")
+        except OSError:
+            pal = theme.get(key)
+            pic = Image.new("RGB", (2, 1))
+            pic.putpixel((0, 0), pal["left"])
+            pic.putpixel((1, 0), pal["right"])
+        # fill the tile, cropping whatever doesn't fit
+        f = max(w / pic.width, h / pic.height)
+        pic = pic.resize((max(w, int(pic.width * f)), max(h, int(pic.height * f))), Image.LANCZOS)
+        x0, y0 = (pic.width - w) // 2, pic.height - h
+        pic = pic.crop((x0, y0, x0 + w, y0 + h))
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=255)
+        img = Image.new("RGBA", (w, h), _rgb(bg) + (255,))
+        img.paste(pic, (0, 0), mask)
+        ImageDraw.Draw(img).rounded_rectangle([0, 0, w - 1, h - 1], radius=r,
+                                              outline=(0, 0, 0, 40), width=SS)
+        return img.resize((self.TW, self.TH), Image.LANCZOS)
 
     def _ring(self):
-        d = (self.D + 8) * SS
-        img = Image.new("RGBA", (d, d), (0, 0, 0, 0))
-        ImageDraw.Draw(img).ellipse([SS, SS, d - SS - 1, d - SS - 1],
-                                    outline=_rgb(P["accent"]) + (255,), width=int(2.2 * SS))
-        return img.resize((self.D + 8, self.D + 8), Image.LANCZOS)
+        w, h = (self.TW + 2 * self.M) * SS, (self.TH + 2 * self.M) * SS
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        lw = int(2.2 * SS)
+        ImageDraw.Draw(img).rounded_rectangle([lw // 2, lw // 2, w - lw // 2 - 1, h - lw // 2 - 1],
+                                              radius=(self.R + self.M) * SS,
+                                              outline=_rgb(P["accent"]) + (255,), width=lw)
+        return img.resize((self.TW + 2 * self.M, self.TH + 2 * self.M), Image.LANCZOS)
+
+    def _at(self, e):
+        c = int((e.x - self.M) // (self.TW + self.GAP))
+        r = int((e.y - self.M) // (self.TH + self.GAP))
+        i = r * self.COLS + c
+        if 0 <= c < self.COLS and 0 <= i < len(self.keys):
+            return i
+        return None
+
+    def _hover(self, e):
+        if self.on_hover:
+            i = self._at(e)
+            self.on_hover(None if i is None else self.keys[i])
 
     def _click(self, e):
-        i = int(max(0, min(len(self.keys) - 1, (e.x - 4) // (self.D + self.GAP))))
-        self.var.set(self.keys[i])
+        i = self._at(e)
+        if i is not None:
+            self.var.set(self.keys[i])
 
 
 class Field(tk.Frame):
@@ -963,7 +1013,8 @@ class App:
         self._label(row, "Look").pack(side="left")
         self.theme_hint = self._label(row, self._theme_name(), self.f_small, fg=P["faint"])
         self.theme_hint.pack(side="right")
-        Swatches(body, self.theme_key, IW).pack(anchor="w", pady=(px(8), px(2)))
+        LookPicker(body, self.theme_key, IW, on_hover=self._look_hover).pack(
+            anchor="w", pady=(px(8), px(2)))
         row = self._row(body)
         self._label(row, "Title").pack(side="left")
         Field(row, self.title_text, "Optional", width=IW - px(64), height=px(30),
@@ -1271,8 +1322,15 @@ class App:
 
     # choices --------------------------------------------------------------
 
-    def _theme_name(self):
-        return theme.THEMES[self.theme_key.get()]["label"].split(" (")[0]
+    def _theme_name(self, key=None):
+        return theme.THEMES[key or self.theme_key.get()]["label"].split(" (")[0]
+
+    def _look_hover(self, key):
+        """Show the name of the look under the mouse, and the picked one otherwise."""
+        try:
+            self.theme_hint.configure(text=self._theme_name(key))
+        except tk.TclError:
+            pass
 
     def _look_changed(self):
         self.theme_hint.configure(text=self._theme_name())

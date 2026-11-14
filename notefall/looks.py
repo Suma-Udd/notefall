@@ -416,14 +416,10 @@ class WashiRenderer(LookRenderer):
                             radius=font_.size * 0.22, fill=(255, 253, 248, 235))
         d.text((x, y - font_.size * 0.05), label, font=font_, fill=self.label_col + (240,))
 
-    def _white_extra(self, d, wh):
-        pass
-
     def _hit_line(self, d):
         # a strip of mustard washi tape along the top of the keys
         W, ww = self.W, self.ww
         h = max(4, int(ww * 0.32))
-        rng = np.random.default_rng(5)
         col = self.pal["tape"]
         strip = Image.new("RGBA", (W, h), col + (230,))
         sd = ImageDraw.Draw(strip, "RGBA")
@@ -447,9 +443,6 @@ class WashiRenderer(LookRenderer):
                 s = ww * 0.24 * (1 - 0.3 * f)
                 d.line([x - s, y, x + s, y], fill=self.c_ink + (a,), width=lw)
                 d.line([x, y - s, x, y + s], fill=self.c_ink + (a,), width=lw)
-
-    def _draw_chord(self, d, t):
-        super()._draw_chord(d, t)
 
 
 # 3. Risograph ---------------------------------------------------------------

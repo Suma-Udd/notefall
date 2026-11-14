@@ -22,6 +22,7 @@ notefall/
   cli.py          the notefall command
   render.py       draws frames and talks to ffmpeg
   paper.py        the Paper look: sketched notes and labelled keys
+  looks.py        Watercolour, Journal, Riso print and Moonlit, built on the Paper look
   hands.py        the animated hands, planned once and drawn on any look
   chords.py       names the chord that's playing
   keyboard.py     key layout, hands and the sustain pedal
@@ -31,7 +32,7 @@ notefall/
   theme.py        the colour themes
   media.py        finding ffmpeg, reading audio, friendly errors
   icon.py         the app icon, drawn in code
-  assets/         fonts (Inter, Kalam) and the Basic Pitch model, with their licenses
+  assets/         fonts (Inter, Kalam and the ones the hand made looks use), the look pictures for the picker, and the Basic Pitch model, with their licenses
 tests/            pytest suite
 examples/         the demo MIDI and the script that builds the demo videos
 scripts/          building the apps and the one line installers

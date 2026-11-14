@@ -29,7 +29,7 @@ notefall song.mid --sustain pedal
 | `--format` | `phone` (1080x1920, default), `youtube` (1920x1080) or `square` (1080x1080) |
 | `--size WxH` | any exact size, like `1440x2560` |
 | `--fps N` | frames per second. Default 60, and 30 renders twice as fast |
-| `--theme` | `default`, `sunset`, `ocean`, `neon`, `gold` or `paper` (sketchbook look with note and chord names) |
+| `--theme` | `default`, `sunset`, `ocean`, `neon`, `gold` (glowing notes on a dark stage), `paper` (sketchbook with note and chord names), `watercolour` (soft paint on cream paper), `washi` (journal: washi tape on a dot grid), `riso` (pink and blue ink print) or `moonlit` (gold notes under a night sky) |
 | `--title TEXT` | text in the top left |
 | `--audio FILE` | sound to put under the video |
 | `--silent` | no sound at all |
